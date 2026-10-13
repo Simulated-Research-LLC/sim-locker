@@ -1,0 +1,24 @@
+{
+ "id": "rev_c8026559abd1",
+ "kind": "review",
+ "range": {
+  "from": "6ff5edbe7379fc19b6160a16ee8ed9b8c49be929",
+  "to": "8f91c848c9a25d29c043c7b9ae4ea3c755636977"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Round 3 on 8f91c84. Verified with real git in a scratch remote and two clones. Stale main with an unsaved file: the status step and the STALE refusal (text and --json next) both say sl save -m --slice <name> (a new slice starts from the remote's main), then sl pull; following those two lines gave a slice whose parent is origin/main with the file on it, main untouched, and sl pull then brought main level. A clean stale main still says sl pull first. Colliding file (README.md changed both sides): the save succeeds on a slice started from the local main, the file is on the slice, the result carries the note in plain text and in --json, main stays where it was, and sl pull on main works after. Hole attempts with --slice main, origin/main, refs/heads/main, heads/main, HEAD, empty, ./main, main/, slice/../main and remotes/origin/main are all BAD_SLICE for rick and claude. README walkthrough comment and STALE row match the code. sl help merge-record works, the NOT FETCHED fix names the MCP form, version 0.2.3 in package.json, package-lock.json and src/mcp.js. npm test 21 pass, npm run lines 989, no em dash in the diff. Polish left: on a dirty stale main the STALE problem line still says next sl pull while the step line below gives the real way out; round 1 polish items 3, 4, 6, 8 and 9 are honestly left and not claimed fixed. One pre-existing finding outside this slice for the backlog: accepting a slice whose file conflicts with main (which the local-main fallback makes more likely) fails at the confirm step with a bare GIT merge --squash error and leaves main's working tree in conflict (UU README.md, the review record staged, STALE REVIEW shown); accept should abort the squash and refuse with a code and plain words, as revert does with REVERT_CONFLICT. Nothing blocks and nothing in this slice needs a code change.",
+ "cited": {
+  "DESIGN.md": "702486aac7e5d16eef90220d2e265c245ddacb73",
+  "README.md": "58571c0b1f6184ff155627adcec0f0dbb622086b",
+  "bin/sl.js": "00af8909326c9fc8e1a2a6600c04e87afe5118b5",
+  "package-lock.json": "80f028e0bcfe83e83e73dfe3d396f628cd80213b",
+  "package.json": "4654e688e789bdd552998a874feeddb27344b373",
+  "src/locker.js": "f64e32b0a22acd85ff166761e92a6ea7172b7158",
+  "src/mcp.js": "cdff6b8dbee8dde95bb8ce9c4d36c518f9ff6247",
+  "test/locker.test.js": "348ba62ebfaee50987d74019688bcd0347678c36"
+ },
+ "created": "2026-10-13T22:06:24.509Z"
+}
