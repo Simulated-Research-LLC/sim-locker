@@ -8,7 +8,7 @@ Reviewer: a fresh-context Opus agent that had not seen the code being written, f
 - **C2** `locker.json` was read from the working tree, so an agent could edit its own kind to `human`. [fixed: the config that rules is the one on `origin/<truth>`; the working tree copy only bootstraps a project that has never been backed up, and `status` says CONFIG FROM WORKING TREE until then; test]
 - **C3** A review record written into the working tree and never committed, or hidden with `.git/info/exclude`, was enough for `accept`; the acceptor could also be the reviewer. [fixed: the record is read from the slice head itself, the reviewer must be a configured actor and not the acceptor (REVIEW_SELF), and cited blobs are re-checked at the head; test]
 - **C4** `revert` had no agent check, and a refused `save --slice main` had already moved HEAD onto main. [fixed: AGENT_ON_TRUTH in revert; the slice name is refused before the checkout; test]
-- The reviewer's note that nothing stops an agent from setting `SL_ACTOR=rick` or using raw git is right. [documented at the top of `src/locker.js` and in README: enforcement needs GitHub branch protection; the tool makes the honest path easy and the dishonest path visible, not impossible]
+- The reviewer's note that nothing stops an agent from setting `SL_ACTOR=rick` or using raw git is right. [documented at the top of `src/locker.js` and in README: enforcement needs GitHub branch protection. Done for this repo on 2026-10-12 after it went public: ruleset 24973232 on `main`, no deletion, no force push, linear history]
 
 ## High
 
