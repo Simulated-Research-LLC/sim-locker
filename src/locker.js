@@ -550,33 +550,37 @@ export async function find(repo, query) {
 // ---------- the restore drill ----------
 
 /** Is the remote truth branch enough to get the project back with plain git and nothing else? Push it to a fresh bare repository
- *  (the "second remote"), clone from that without Sim Locker, check the commit, the config and the records came along, then run the
- *  project's test command there. Fails with DRILL_FAILED and leaves the folders for a look; passes and removes them unless told to keep. */
+ *  (the "second remote"), clone from that without Sim Locker, check the commit and the config came along, then run the project's test
+ *  command there. The record count is reported, not checked: the same commit is the same tree. Fails with DRILL_FAILED and leaves the folders for a look; passes and removes them unless told to keep. */
 export async function drill(repo, { test = repo.config.drill.test, keep = false, dir } = {}) {
-  await freshen(repo, { force: true });
+  const f = await freshen(repo, { force: true });
+  if (!f.fresh) throw new LockerError("NOT_BACKED_UP", `cannot ask ${repo.config.remote}: ${f.reason}; a drill from a stale tracking ref proves nothing`);
   const { truth, remote } = repo.config;
   const head = await revParse(repo.top, `${remote}/${truth}`);
   if (!head) throw new LockerError("NOT_BACKED_UP", `${remote}/${truth} does not exist; there is nothing to restore from`);
-  const root = dir ? resolve(dir) : await mkdtemp(join(tmpdir(), "sl-drill-"));
+  if ((await git(repo.top, ["rev-parse", "--is-shallow-repository"])) === "true") throw new LockerError("USAGE", "this clone is shallow, so it cannot stand in for the remote; run git fetch --unshallow first");
+  let root;
+  if (dir) {   // a folder the caller named must be new or empty: the drill only ever removes what it made
+    root = resolve(dir); await mkdir(root, { recursive: true });
+    if ((await readdir(root)).length) throw new LockerError("USAGE", `${root} is not empty; the drill wants a new or empty folder`);
+  } else root = await mkdtemp(join(tmpdir(), "sl-drill-"));
   const bare = join(root, "second.git"), clone = join(root, "restored");
-  await mkdir(root, { recursive: true });
   await git(root, ["init", "--bare", "--quiet", "-b", truth, bare]);
   await git(repo.top, ["push", "--quiet", bare, `${head}:refs/heads/${truth}`]);
   await git(root, ["clone", "--quiet", bare, clone]);
-  const list = async (cwd, ref) => (await git(cwd, ["ls-tree", "-r", "--name-only", ref, "locker/"], { allowFail: true }) ?? "").split("\n").filter(Boolean);
-  const restored = await revParse(clone, "HEAD"), records = await list(clone, "HEAD"), expected = await list(repo.top, head);
+  const restored = await revParse(clone, "HEAD");
+  const records = (await git(clone, ["ls-tree", "-r", "--name-only", "HEAD", "locker/"], { allowFail: true }) ?? "").split("\n").filter(Boolean).length;
   const problems = [];
   if (restored !== head) problems.push(`the restored clone is at ${restored}, not ${head}`);
-  if (!(await blobAt(clone, "HEAD", CONFIG))) problems.push(`${CONFIG} did not come along`);
-  if (records.length !== expected.length) problems.push(`${records.length} record file(s) restored, ${expected.length} on ${remote}/${truth}`);
+  if (!(await blobAt(clone, "HEAD", CONFIG))) problems.push(`${CONFIG} is not on ${remote}/${truth}`);
   let ran = null;
   if (test) {
     const r = await runCommand(test, clone, { SL_DRILL_COMMIT: head }, repo.config.drill.timeoutSeconds);
     ran = { command: test.join(" "), code: r.code, lastLines: r.output.trim().split("\n").slice(-12).join("\n") };
-    if (r.code !== 0) problems.push(`the test command exited ${r.code}`);
+    if (r.code !== 0) problems.push(`the test command exited ${r.code}:\n${ran.lastLines}`);
   }
-  const result = { truth: `${remote}/${truth}`, commit: head, secondRemote: bare, restoredClone: clone, records: records.length, test: ran ?? "none (no drill.test in locker.json and no command given)" };
-  if (problems.length) throw new LockerError("DRILL_FAILED", `restore drill failed: ${problems.join("; ")} (folders kept under ${root})`, { ...result, problems });
-  if (!keep) { await rm(root, { recursive: true, force: true }); result.secondRemote = result.restoredClone = `removed (${root}; pass --keep to keep them)`; }
+  const result = { truth: `${remote}/${truth}`, commit: head, secondRemote: bare, restoredClone: clone, records, test: ran ?? "none (no drill.test on the truth branch's locker.json and no command given)" };
+  if (problems.length) throw new LockerError("DRILL_FAILED", `restore drill failed: ${problems.join("; ")}\n(folders kept under ${root})`, { ...result, problems });
+  if (!keep) { await rm(dir ? bare : root, { recursive: true, force: true }); if (dir) await rm(clone, { recursive: true, force: true }); result.secondRemote = result.restoredClone = `removed (${root}; pass --keep to keep them)`; }
   return { drilled: true, ...result };
 }
