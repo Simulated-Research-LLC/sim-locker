@@ -13,6 +13,7 @@ const COMMANDS = {
   status: { group: "where you stand", usage: "sl status [--no-fetch]", what: "problems first, each with the command that fixes it, then saved / backed up / accepted / live and the next step", options: ["--no-fetch   do not ask the remote first (the output then says NOT FETCHED)"], example: "sl status" },
   save: { group: "saved", usage: 'sl save -m "<what and why>" [--slice <name>] [paths...]', what: "save the work on the slice branch, stamped with the actor", options: ["-m, --message   what changed and why (required)", "--slice <name>  the slice branch to save on; made from the truth branch if new", "paths...        only these files; all changes when none are given"], example: 'sl save -m "boss hp x1.25" --slice slice/boss-hp' },
   backup: { group: "backed up", usage: "sl backup", what: "send the current branch to the remote, then fetch it back and prove it arrived", options: [], example: "sl backup" },
+  update: { group: "accepted", usage: 'sl update [-m "<message>"]', what: "bring the truth branch's changes into this slice as a save, so it can be accepted after the truth branch moved; lines both sides changed are left marked for you to settle, then sl save", options: ["-m, --message   the save's message (default: bring main into <slice>)"], example: "sl update" },
   pull: { group: "backed up", usage: "sl pull", what: "bring the truth branch up to date from the remote (never rewrites history)", options: [], example: "sl pull" },
   review: { group: "accepted", usage: 'sl review <truth>..<slice> --verdict pass|fix|block -f "<findings>"', what: "write a review record for exactly that range, as a different actor from the one who will accept", options: ["--verdict       pass, fix or block (required)", "-f, --findings  what was found, in words"], example: 'SL_ACTOR=astra sl review main..slice/boss-hp --verdict pass -f "numbers match the probe output"' },
   lease: { group: "accepted", usage: "sl lease status|acquire|renew|release", what: "the one-writer lease on the truth branch (30 min, renew by heartbeat)", options: [], example: "sl lease acquire" },
@@ -94,6 +95,7 @@ async function main() {
     case "save": out(await L.save(repo, actor, { message: opt.message, paths: args, slice: opt.slice })); return 0;
     case "backup": out(await L.backup(repo)); return 0;
     case "pull": out(await L.pull(repo)); return 0;
+    case "update": out(await L.update(repo, actor, { message: opt.message })); return 0;
     case "lease": out(await L.lease(repo, actor, args[0] ?? "status")); return 0;
     case "review": {
       const [from, to] = (args[0] ?? "").split(".."); if (!from || !to) throw new L.LockerError("USAGE", "review needs the range <truth>..<slice>, a verdict and findings", { next: COMMANDS.review.example });

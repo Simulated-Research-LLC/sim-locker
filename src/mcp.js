@@ -33,6 +33,8 @@ export function buildServer(cwd = process.cwd()) {
     wrap(async (repo, a) => L.accept(repo, await actor(repo), a)));
   server.registerTool("lease", { description: "The one-writer lease on the truth branch: status, acquire, renew, release. 30 minutes by default; an expired lease can be taken by anyone.", inputSchema: { action: z.enum(["status", "acquire", "renew", "release"]) }, annotations: rw },
     wrap(async (repo, a) => L.lease(repo, await actor(repo), a.action)));
+  server.registerTool("update", { description: "Bring the truth branch's changes into the current slice as a save stamped with this actor, so the slice can be accepted after the truth branch moved. Lines both sides changed are left in the files with git's marks (UPDATE_CONFLICT names them); settle them, then save.", inputSchema: { message: z.string().optional() }, annotations: rw },
+    wrap(async (repo, a) => L.update(repo, await actor(repo), a)));
   server.registerTool("find", { description: "Search the review and live records for words.", inputSchema: { query: z.string() }, annotations: ro },
     wrap((repo, a) => L.find(repo, a.query)));
   server.registerTool("drill", { description: "Restore drill: fetch, push the remote truth branch to a fresh bare repository under the temp folder, clone it back with plain git and no Sim Locker, check the commit and locker.json came along, and run drill.test from the truth branch's locker.json in that clone. Changes nothing in the working tree or on the remote. DRILL_FAILED keeps the folders for a look.", inputSchema: { keep: z.boolean().optional().describe("keep the two folders") }, annotations: rw },
