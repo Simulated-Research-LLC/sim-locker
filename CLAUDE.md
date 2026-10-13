@@ -8,7 +8,7 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 2. Under 1,500 lines of JavaScript across `src/` and `bin/`. `npm run lines` counts. Over that is a design problem, not a formatting one.
 3. Everything the tool knows is a plain file in the repo or a git ref. No database, no server, no state a plain `git clone` loses.
 4. The actor comes from `SL_ACTOR` in the environment. Never from a tool argument, a payload or a file.
-5. No force-push anywhere except the compare-and-swap on `refs/heads/locker/lease`. `grep -n force src/` should show only that line and options named force that are not pushes: `freshen`'s (fetch now), `worktree remove --force` on the gate's own checkout, and the `rm` of the drill's own folders.
+5. No force-push anywhere except the compare-and-swap on `refs/heads/locker/lease`. `grep -n force src/` should show, besides prose that says the tool never forces, only that line and options named force that are not pushes: `freshen`'s (fetch now), `worktree remove --force` on the gate's own checkout, and the `rm` of the drill's own folders.
 6. A refusal is a thrown `LockerError` with a stable code. Codes are listed in `README.md`; a new code is added there in the same change.
 7. The push exit code is not evidence. After every push, fetch and compare refs.
 8. Tests run against real git (`npm test`). A behaviour with no test is a claim, not a feature. Fakes of git are not accepted.

@@ -92,7 +92,11 @@ async function main() {
     case "revert": { const r = await L.revert(repo, actor, { commit: args[0], confirm: opt.confirm }); out(r); return r.confirmRequired ? 3 : 0; }
     case "live": out(await L.setLive(repo, actor, args[0])); return 0;
     case "find": out(await L.find(repo, args.join(" "))); return 0;
-    case "drill": out(await L.drill(repo, { test: args.length ? args : undefined, keep: opt.keep, dir: opt.dir })); return 0;
+    case "drill": {
+      const unknown = Object.keys(opt).filter((k) => !["json", "keep", "dir"].includes(k));   // "sl drill node --test" would run bare node and pass
+      if (unknown.length) throw new L.LockerError("USAGE", `unknown option --${unknown[0]}; give the test command after --, like: sl drill -- node --test`);
+      out(await L.drill(repo, { test: args.length ? args : undefined, keep: opt.keep, dir: opt.dir })); return 0;
+    }
     default: throw new L.LockerError("USAGE", `unknown command "${cmd}"\n${HELP}`);
   }
 }

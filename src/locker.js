@@ -552,16 +552,24 @@ export async function find(repo, query) {
 /** Is the remote truth branch enough to get the project back with plain git and nothing else? Push it to a fresh bare repository
  *  (the "second remote"), clone from that without Sim Locker, check the commit and the config came along, then run the project's test
  *  command there. The record count is reported, not checked: the same commit is the same tree. Fails with DRILL_FAILED and leaves the folders for a look; passes and removes them unless told to keep. */
-export async function drill(repo, { test = repo.config.drill.test, keep = false, dir } = {}) {
+export async function drill(repo, { test, keep = false, dir } = {}) {
   const f = await freshen(repo, { force: true });
   if (!f.fresh) throw new LockerError("NOT_BACKED_UP", `cannot ask ${repo.config.remote}: ${f.reason}; a drill from a stale tracking ref proves nothing`);
   const { truth, remote } = repo.config;
   const head = await revParse(repo.top, `${remote}/${truth}`);
   if (!head) throw new LockerError("NOT_BACKED_UP", `${remote}/${truth} does not exist; there is nothing to restore from`);
   if ((await git(repo.top, ["rev-parse", "--is-shallow-repository"])) === "true") throw new LockerError("USAGE", "this clone is shallow, so it cannot stand in for the remote; run git fetch --unshallow first");
+  // the drill settings come from the exact commit being restored, read after the fetch, not from the config openRepo loaded before it
+  const text = await git(repo.top, ["show", `${head}:${CONFIG}`], { allowFail: true });
+  let settings = { test: null, timeoutSeconds: 900 };
+  if (text !== null) { try { settings = checkConfig(JSON.parse(text), head.slice(0, 7)).drill; } catch (e) { if (!(e instanceof LockerError)) throw new LockerError("CONFIG", `${CONFIG} on ${head.slice(0, 7)} is not valid JSON`); throw e; } }
+  if (test === undefined) test = settings.test;
   let root;
   if (dir) {   // a folder the caller named must be new or empty: the drill only ever removes what it made
-    root = resolve(dir); await mkdir(root, { recursive: true });
+    root = resolve(dir);
+    const st = await stat(root).catch(() => null);
+    if (st && !st.isDirectory()) throw new LockerError("USAGE", `${root} is a file, not a folder`);
+    await mkdir(root, { recursive: true });
     if ((await readdir(root)).length) throw new LockerError("USAGE", `${root} is not empty; the drill wants a new or empty folder`);
   } else root = await mkdtemp(join(tmpdir(), "sl-drill-"));
   const bare = join(root, "second.git"), clone = join(root, "restored");
@@ -575,12 +583,12 @@ export async function drill(repo, { test = repo.config.drill.test, keep = false,
   if (!(await blobAt(clone, "HEAD", CONFIG))) problems.push(`${CONFIG} is not on ${remote}/${truth}`);
   let ran = null;
   if (test) {
-    const r = await runCommand(test, clone, { SL_DRILL_COMMIT: head }, repo.config.drill.timeoutSeconds);
+    const r = await runCommand(test, clone, { SL_DRILL_COMMIT: head }, settings.timeoutSeconds);
     ran = { command: test.join(" "), code: r.code, lastLines: r.output.trim().split("\n").slice(-12).join("\n") };
     if (r.code !== 0) problems.push(`the test command exited ${r.code}:\n${ran.lastLines}`);
   }
   const result = { truth: `${remote}/${truth}`, commit: head, secondRemote: bare, restoredClone: clone, records, test: ran ?? "none (no drill.test on the truth branch's locker.json and no command given)" };
   if (problems.length) throw new LockerError("DRILL_FAILED", `restore drill failed: ${problems.join("; ")}\n(folders kept under ${root})`, { ...result, problems });
-  if (!keep) { await rm(dir ? bare : root, { recursive: true, force: true }); if (dir) await rm(clone, { recursive: true, force: true }); result.secondRemote = result.restoredClone = `removed (${root}; pass --keep to keep them)`; }
+  if (!keep) { await rm(dir ? bare : root, { recursive: true, force: true }); if (dir) await rm(clone, { recursive: true, force: true }); result.secondRemote = result.restoredClone = `removed from ${root} (pass --keep to keep them)`; }
   return { drilled: true, ...result };
 }
