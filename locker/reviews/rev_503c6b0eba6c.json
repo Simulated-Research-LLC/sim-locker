@@ -1,0 +1,28 @@
+{
+ "id": "rev_503c6b0eba6c",
+ "kind": "review",
+ "range": {
+  "from": "0737a283e1ac9b7546afadf933f251f8ed3d57aa",
+  "to": "8d4e79329316f4dee949591e18fb34bf9fea4f1d"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Round 2 adversarial review of sl drill at 8d4e793, verified in a scratch bare remote plus clones. The nine round-2 findings are fixed and shown by real runs: the drill settings now come from locker.json on the restored commit read after the fetch (a drill.test exit 7 pushed by another clone failed A's first drill with the tracking ref deliberately set back to efba2bd), with a test; the shallow-clone refusal has a test and refuses by hand; the Percept 7 ok lines are pasted into docs/drills-2026-10-13.md with the folder and command, and DESIGN.md says copied; sl drill node --test is refused with USAGE and points at the -- form; the README gives Windows npm.cmd as the reason for node --test over npm test (sl drill -- npm test passed 20 tests here on Linux); the pass message says removed from the folder; a file as --dir is refused with USAGE; the README names the --dir inside the working tree case; rule 5 says the grep also shows prose. Also checked: --dir . on a managed clone refused and the clone intact; an empty --dir left in place and empty after a pass; NOT_BACKED_UP when the remote cannot be asked, with the tracking ref stale; DRILL_FAILED plain output carries the test's last lines; node --test from locker.json passed 20 tests in a restored clone of this repo; MCP registers eight tools, drill with keep only and read-write annotations; npm test 20 pass 0 fail at 8d4e793; npm run lines 938; no em dash in any added line; docs/drills JSON cross-checked against main (0737a28, 15 records, 18 tests) and old-winds (486a26b, 6 records). Left as polish, no fix needed: the removed from message in the temp-folder case names a folder that no longer exists.",
+ "cited": {
+  "AGENTS.md": "032f82267e346b667cc2520f809b60d1b2c85845",
+  "CLAUDE.md": "032f82267e346b667cc2520f809b60d1b2c85845",
+  "DESIGN.md": "0fdd30b5d456ec56a0066b83309122e8c4ec9f68",
+  "README.md": "b880b50fc0b6d306232370d03b198ba8b729382f",
+  "bin/sl.js": "6fc462a19fda26320199588f111a0ffc26fefe6c",
+  "docs/drills-2026-10-13.md": "45d62393fdd246817ec41f9fe61d7907d661d81e",
+  "locker.json": "b8519e8092cca1d90e6d303fe215b12b5c834479",
+  "package-lock.json": "0516fd29d69b2c7e7c3a1eaea7964d74d39a19fb",
+  "package.json": "627ffeefdb2019d3fb8afcb8caa89d19e7529d03",
+  "src/locker.js": "d5b387c92d88edd6a84bff612a5c2e98ac93778f",
+  "src/mcp.js": "8e34c8dd475d29df9bf46a9f67c218ae59f3a9f4",
+  "test/locker.test.js": "9fd0d197a2770f27d7bae225a2b0fb57ed412eec"
+ },
+ "created": "2026-10-13T19:16:35.633Z"
+}

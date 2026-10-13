@@ -1,7 +1,7 @@
 // End to end against real git: a bare remote standing in for GitHub, two clones standing in for two machines or two sessions.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -394,4 +394,60 @@ test("bootstrap: a project whose truth branch has no locker.json yet accepts the
   const e = await rejects(L.accept(repo3, claude, { slice: "slice/takeover", reviewId: rvm.id }), "CONFIG");
   assert.match(e.message, /was on origin\/main before/);
   await L.lease(repo3, claude, "release");
+});
+
+test("the restore drill: a plain clone from a second remote carries the commit, the config and the records, and runs the tests", async () => {
+  const repo = await L.openRepo(A);
+  const dir = join(tmp, "drill-pass");
+  const r = await L.drill(repo, { test: [process.execPath, "-e", "console.log('tests ok'); process.exit(0)"], keep: true, dir });
+  assert.equal(r.drilled, true);
+  assert.equal(r.commit, sh(A, "rev-parse", "origin/main"));
+  assert.equal(sh(join(dir, "restored"), "rev-parse", "HEAD"), r.commit);
+  assert.ok(r.records > 0, "review records are on the restored commit");
+  assert.equal(r.test.code, 0); assert.match(r.test.lastLines, /tests ok/);
+  await assert.rejects(import("node:fs/promises").then((fs) => fs.stat(join(dir, "restored", ".git", "locker-session"))), "the restored clone is plain git, not a managed clone");
+  assert.throws(() => L.checkConfig({ project: "x", truth: "main", remote: "origin", actors: {}, drill: { test: "npm test" } }), /drill\.test must be a list/);
+  assert.throws(() => L.checkConfig({ project: "x", truth: "main", remote: "origin", actors: {}, drill: { timeoutSeconds: 0 } }), /drill\.timeoutSeconds/);
+  const none = await L.drill(repo, { test: null });
+  assert.match(none.test, /^none/); assert.match(none.restoredClone, /^removed/);
+  // a folder of the caller's own: refused when not empty, and only the drill's two folders are removed from it afterwards
+  const e = await rejects(L.drill(repo, { test: null, dir }), "USAGE"); assert.match(e.message, /not empty/);
+  const own = join(tmp, "drill-own"); await mkdir(own); await writeFile(join(own, "notes.txt"), "mine\n");
+  await rejects(L.drill(repo, { test: null, dir: own }), "USAGE");
+  const empty = join(tmp, "drill-empty"); await mkdir(empty);
+  await L.drill(repo, { test: null, dir: empty });
+  assert.deepEqual(await readdir(empty), [], "the given folder is left in place, emptied of the drill's folders only");
+  assert.equal(await readFile(join(own, "notes.txt"), "utf8"), "mine\n");
+  // drill.test comes from the commit being restored, read after the fetch: a setting added on the truth branch by another clone applies at once
+  sh(tmp, "clone", "--quiet", remote, join(tmp, "D")); const D = join(tmp, "D");
+  const cfg = JSON.parse(await readFile(join(D, "locker.json"), "utf8")); cfg.drill = { test: [process.execPath, "-e", "process.exit(9)"], timeoutSeconds: 1 };
+  await writeFile(join(D, "locker.json"), JSON.stringify(cfg, null, 2) + "\n"); sh(D, "commit", "--quiet", "-am", "drill.test"); sh(D, "push", "--quiet", "origin", "main");
+  const nine = await rejects(L.drill(repo), "DRILL_FAILED"); assert.equal(nine.details.test.code, 9); assert.equal(nine.details.commit, sh(D, "rev-parse", "HEAD"));
+  sh(D, "reset", "--quiet", "--hard", "HEAD~1"); sh(D, "push", "--quiet", "--force", "origin", "main");   // raw git in the test only, to put the remote back
+  // a shallow clone cannot stand in for the remote; a file as --dir is refused with the right code
+  const S = join(tmp, "shallow"); sh(tmp, "clone", "--quiet", "--depth", "1", "file://" + remote, S);
+  await writeFile(join(S, "locker.json"), await readFile(join(A, "locker.json"), "utf8"));
+  const shallow = await rejects(L.drill(await L.openRepo(S), { test: null }), "USAGE"); assert.match(shallow.message, /shallow/);
+  await writeFile(join(tmp, "afile"), "x\n"); await rejects(L.drill(repo, { test: null, dir: join(tmp, "afile") }), "USAGE");
+  // the remote cannot be asked: no drill from the tracking ref
+  const url = sh(A, "remote", "get-url", "origin"); sh(A, "remote", "set-url", "origin", url + ".gone");
+  try { await rejects(L.drill(repo, { test: null }), "NOT_BACKED_UP"); } finally { sh(A, "remote", "set-url", "origin", url); }
+});
+
+test("the restore drill fails on a failing test command and keeps the folders for a look", async () => {
+  const repo = await L.openRepo(A);
+  const dir = join(tmp, "drill-fail");
+  const e = await rejects(L.drill(repo, { test: [process.execPath, "-e", "console.error('boom'); process.exit(3)"], dir }), "DRILL_FAILED");
+  assert.match(e.message, /exited 3/); assert.match(e.message, /folders kept/);
+  assert.match(e.details.problems[0], /^the test command exited 3:\nboom/); assert.match(e.message, /boom/);
+  assert.match(e.details.test.lastLines, /boom/);
+  assert.equal(sh(join(dir, "restored"), "rev-parse", "HEAD"), e.details.commit);
+  // a hung test runner is a failed drill, not a hung drill; the timeout is the restored commit's drill.timeoutSeconds
+  const D = join(tmp, "D"); sh(D, "pull", "--quiet", "--ff-only");
+  const cfg = JSON.parse(await readFile(join(D, "locker.json"), "utf8")); cfg.drill = { timeoutSeconds: 1 };
+  await writeFile(join(D, "locker.json"), JSON.stringify(cfg, null, 2) + "\n"); sh(D, "commit", "--quiet", "-am", "drill timeout"); sh(D, "push", "--quiet", "origin", "main");
+  const t0 = Date.now();
+  const slow = await rejects(L.drill(repo, { test: [process.execPath, "-e", "setTimeout(() => {}, 60000)"], dir: join(tmp, "drill-slow") }), "DRILL_FAILED");
+  assert.equal(slow.details.test.code, 124); assert.match(slow.details.test.lastLines, /killed after 1 s/);
+  assert.ok(Date.now() - t0 < 5000, "killed within the second, not after a minute");
 });

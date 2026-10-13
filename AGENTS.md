@@ -8,7 +8,7 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 2. Under 1,500 lines of JavaScript across `src/` and `bin/`. `npm run lines` counts. Over that is a design problem, not a formatting one.
 3. Everything the tool knows is a plain file in the repo or a git ref. No database, no server, no state a plain `git clone` loses.
 4. The actor comes from `SL_ACTOR` in the environment. Never from a tool argument, a payload or a file.
-5. No force-push anywhere except the compare-and-swap on `refs/heads/locker/lease`. `grep -n force src/` should show only that line and the `force` option of `freshen`, which means "fetch now", not a force-push.
+5. No force-push anywhere except the compare-and-swap on `refs/heads/locker/lease`. `grep -n force src/` should show, besides prose that says the tool never forces, only that line and options named force that are not pushes: `freshen`'s (fetch now), `worktree remove --force` on the gate's own checkout, and the `rm` of the drill's own folders.
 6. A refusal is a thrown `LockerError` with a stable code. Codes are listed in `README.md`; a new code is added there in the same change.
 7. The push exit code is not evidence. After every push, fetch and compare refs.
 8. Tests run against real git (`npm test`). A behaviour with no test is a claim, not a feature. Fakes of git are not accepted.
@@ -18,10 +18,10 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 
 | path | what |
 |---|---|
-| `src/locker.js` | the core. `openRepo`, `actorFromEnv`, `freshen`, `lease`, `review`, `status`, `save`, `backup`, `pull`, `accept`, `revert`, `init`, `setLive`, `find` |
+| `src/locker.js` | the core. `openRepo`, `actorFromEnv`, `freshen`, `lease`, `review`, `status`, `save`, `backup`, `pull`, `accept`, `revert`, `init`, `setLive`, `find`, `drill` (the restore drill: second remote, plain clone, tests) |
 | `src/git.js` | `git(cwd, args, {input, allowFail})` and small helpers. `allowFail` returns null instead of throwing |
 | `src/merge-record.js` | `mergeKeys`, `mergeJson`, `mergeFrontmatter`, `mergeRecordFiles` (the git entry point) |
-| `src/mcp.js` | `buildServer(cwd)`: seven tools over the core |
+| `src/mcp.js` | `buildServer(cwd)`: eight tools over the core |
 | `docs/review-0.1.md` | the adversarial review of the first build and the fix status of every finding; the attack list to rerun after any change to `accept`, `save` or the lease |
 | `bin/sl.js` | argument parsing and plain-text printing only; no logic |
 | `bin/sl-guard.js`, `.github/workflows/guard-main.yml` | the tripwire on pushes to main: fails and opens an issue on a forced push or a commit that bypassed the tool |
