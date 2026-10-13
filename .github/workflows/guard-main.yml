@@ -6,7 +6,7 @@
 name: guard main
 on:
   push:
-    branches: [main]
+    branches: [main, 'guard-test/**']   # guard-test/ branches exist only to exercise the failing path
 permissions:
   contents: read
   issues: write
