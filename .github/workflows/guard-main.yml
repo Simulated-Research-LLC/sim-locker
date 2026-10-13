@@ -1,4 +1,4 @@
-# The tripwire for the truth branch. Runs on every push to main. It cannot refuse a push (that needs branch protection, which
+# The tripwire for the truth branch. Runs on every push to main, and to guard-test/ branches made to exercise it. It cannot refuse a push (that needs branch protection, which
 # needs GitHub Pro on a private personal repo and cannot be set from the cloud session). It fails the run and opens an issue when
 # the push was forced, or when a new commit has no Locker-Actor trailer and its author is not a human actor in the locker.json of
 # the commit before the push. It does not catch a hand-typed trailer, a raw commit under a human actor's name, or a push that
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: check every new commit on main
+      - name: check every new commit on the pushed branch
         id: guard
         shell: bash
         run: |
@@ -32,7 +32,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue create --title "guard main: bad push ${GITHUB_SHA::7} by ${{ github.actor }}" --body-file guard.txt --label guard || gh issue create --title "guard main: bad push ${GITHUB_SHA::7} by ${{ github.actor }}" --body-file guard.txt
+          gh issue create --title "guard main: bad push ${GITHUB_SHA::7} by ${{ github.actor }}" --body-file guard.txt --label guard 2>/dev/null || gh issue create --title "guard main: bad push ${GITHUB_SHA::7} by ${{ github.actor }}" --body-file guard.txt
       - name: fail the run when the guard fails
         if: steps.guard.outputs.code != '0'
         run: exit 1
