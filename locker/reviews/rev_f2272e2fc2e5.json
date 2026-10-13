@@ -1,0 +1,22 @@
+{
+ "id": "rev_f2272e2fc2e5",
+ "kind": "review",
+ "range": {
+  "from": "1488836b2913857d2524cfd2b9fe0f4881c0cd44",
+  "to": "41099f1ab3b6f901c434d1444a0908ddc24106dd"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "fix",
+ "findings": "npm test passes 15 of 15. The workflow trigger is valid YAML and valid Actions glob syntax, and GitHub ran it: run 38348747072 on guard-test/raw-push at 94cfdf6 failed and opened issue 1, closed. The errata matches the record: package.json was 0.1.0 at 1488836, and the three records exist with the ids in its message. Must change before main: (1) package-lock.json:3 and :9 still say 0.1.0 while package.json says 0.1.1; bump both. (2) README.md:60 says the failing path was exercised, but the test push made a new branch, so before was all zeros and the guard took its FIRST PUSH path: it read the actor list from the pushed commit and checked the whole history, and it would have failed with no raw commit at all because a8e6995 and 748589e are raw too (the issue lists all three). The path a push to main takes (before..after, actor list from the commit before) was not exercised on GitHub, only in the test suite. Say that. (3) README.md:58 says the low findings not fixed are still open, which is true, but docs/review-0.1.md also leaves M4 partly fixed and M1 not tested under a timed race; the sentence reads as if only lows remain. Name them or say medium and low. Should change: guard-main.yml:1 still says it runs on every push to main and the step name at :23 says main; docs/errata.md is not in the README Files list at README.md:110-125 and nothing links it; the errata gives 2026-10-12 for a commit dated 2026-10-13 03:38 UTC, so name the timezone; the errata could also say that all three records and the accept share session 509260993471, so the reviewer ran in the author's own clone, which a reader of fresh-context would want to know. The issue was created by the fallback without the guard label (the label does not exist). Nothing in the diff goes beyond the commit message; DESIGN.md:25 makes the same race attribution as README.md:106 and is accurate.",
+ "cited": {
+  ".github/workflows/guard-main.yml": "66a634773044b0028330116cf59a05d4d8c370ac",
+  "DESIGN.md": "4f41efbd00a1df31686ceb4ac6b4c255260cc777",
+  "README.md": "fc17b9ce85479857e3ef5fa1d4c22a9190cae135",
+  "docs/errata.md": "35dc8f3008703f5b95acbd0d7174200457569cbb",
+  "package.json": "4a30d82b18cfaf4d22222060ea8d7db28e3ccdbf",
+  "src/mcp.js": "fda8c5ff0581e7adad632f5b33fa708b7ce44ae4"
+ },
+ "created": "2026-10-13T04:58:22.530Z"
+}

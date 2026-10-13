@@ -1,0 +1,24 @@
+{
+ "id": "rev_ddf330b9ef95",
+ "kind": "review",
+ "range": {
+  "from": "1488836b2913857d2524cfd2b9fe0f4881c0cd44",
+  "to": "fa3709f427bce235aee4cc5826fd4f002f66a0ca"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791867616",
+ "verdict": "pass",
+ "findings": "npm test passes 15 of 15. Every item of rev_f2272e2fc2e5 is addressed. Must change: (1) package-lock.json:3 and :9 now say 0.1.1, and the only version strings in json and js are 0.1.1 (package.json:3, package-lock.json:3 and :9, src/mcp.js:9). (2) README.md:60 now says the GitHub run took the first-push path and would have failed on the two pre-tool commits alone (a8e6995 and 748589e are raw commits by Claude), and that the main path has run green once and failed only in the suite. Checked on GitHub: run 38348747072 is guard-test/raw-push, failure; issue 1 is 'guard main: bad push 94cfdf6 by simulated-research', closed, no label; run 38342646633 on main at 1488836 succeeded and its log checked only 1488836, so it took the before..after path as claimed. (3) README.md:58 now names M1, M4, L2, L3 and L5, which matches docs/review-0.1.md:22,25,34,35,37. Should change: guard-main.yml:1 and the step name at :23 now mention the pushed branch and guard-test/; docs/errata.md is in the Files list at README.md:123; the errata names UTC and Denver time, which matches the commit date 2026-10-13 03:38 UTC; the shared session 509260993471 is stated, and the rev_f2272e2fc2e5 record carries it too. The new README.md:50 note about the remote slice branch matches src/locker.js:416-417, which renames locally and pushes done/ without deleting the old remote name. No em dashes in the changed files. Nits, not blocking: README.md:60 opens with 'on every push to main' before saying guard-test/ is also watched; the guard-test/** trigger stays in the workflow for good, so any push to such a branch opens a 'guard main' issue; 2>/dev/null at guard-main.yml:35 hides the reason the labelled create fails. This record has its own session id, unlike the earlier one.",
+ "cited": {
+  ".github/workflows/guard-main.yml": "b41ba183865cf87e6b3898c7c118007173847d15",
+  "DESIGN.md": "4f41efbd00a1df31686ceb4ac6b4c255260cc777",
+  "README.md": "4beb4da8e9e27bc46ed3f4de3ebcb210834e2701",
+  "docs/errata.md": "82750aecc4c7703d2dc967e01cdc56a21f08e877",
+  "locker/reviews/rev_f2272e2fc2e5.json": "596f47928551d990567d93772c37898769bee1e5",
+  "package-lock.json": "24fd7a3fc4450b00bd400ae604ab2ddbc33a3805",
+  "package.json": "4a30d82b18cfaf4d22222060ea8d7db28e3ccdbf",
+  "src/mcp.js": "fda8c5ff0581e7adad632f5b33fa708b7ce44ae4"
+ },
+ "created": "2026-10-13T05:00:16.999Z"
+}
