@@ -34,6 +34,8 @@ export function buildServer(cwd = process.cwd()) {
     wrap(async (repo, a) => L.lease(repo, await actor(repo), a.action)));
   server.registerTool("find", { description: "Search the review and live records for words.", inputSchema: { query: z.string() }, annotations: ro },
     wrap((repo, a) => L.find(repo, a.query)));
+  server.registerTool("drill", { description: "Restore drill: push the remote truth branch to a fresh bare repository, clone it back with plain git and no Sim Locker, check the commit, locker.json and the records came along, and run drill.test from locker.json (or the command given) in that clone. DRILL_FAILED keeps the folders for a look.", inputSchema: { test: z.array(z.string()).optional().describe("the test command and its arguments; default drill.test"), keep: z.boolean().optional() }, annotations: ro },
+    wrap((repo, a) => L.drill(repo, a)));
   return server;
 }
 

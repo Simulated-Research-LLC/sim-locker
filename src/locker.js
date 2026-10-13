@@ -5,9 +5,9 @@
 // agent cannot promote itself by editing a file in its clone. But nothing here runs on the server. An agent that sets SL_ACTOR=rick,
 // or uses raw git, is stopped only by GitHub branch protection or a server hook. Sim Locker makes the honest path easy and the
 // dishonest path visible (trailers, records, the lease); it does not make it impossible.
-import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, mkdtemp, readdir, stat, rm } from "node:fs/promises";
 import { join, relative, resolve, dirname } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,10 @@ export function checkConfig(config, from = "locker.json") {
     if (/^(locker($|[./])|\.gitattributes|\.github|bin\/sl-guard)/.test(pat)) throw new LockerError("CONFIG", `accept.trailing pattern "${pat}" is under a protected path; locker.json, locker/, .gitattributes, .github/ and the guard are never trailing`);
     if (["locker.json", "locker/reviews/rev_000000000000.json", "locker/live/x.json", ".gitattributes", ".github/workflows/x.yml", "bin/sl-guard.js"].some((f) => re.test(f))) throw new LockerError("CONFIG", `accept.trailing pattern "${pat}" would cover locker.json, locker/, .gitattributes, .github/ or the guard; those are never trailing`);
   }
+  // drill.test: the command `sl drill` runs in a plain clone restored from a second remote (the project's tests); none means restore only.
+  config.drill = { test: null, timeoutSeconds: 900, ...(config.drill ?? {}) };
+  if (config.drill.test !== null && !(Array.isArray(config.drill.test) && config.drill.test.every((x) => typeof x === "string") && config.drill.test.length)) throw new LockerError("CONFIG", "drill.test must be a list of strings (the command and its arguments)");
+  if (!(Number.isInteger(config.drill.timeoutSeconds) && config.drill.timeoutSeconds >= 1 && config.drill.timeoutSeconds <= 86400)) throw new LockerError("CONFIG", "drill.timeoutSeconds must be a whole number of seconds from 1 to 86400");
   if (!(Number.isInteger(config.accept.gateTimeoutSeconds) && config.accept.gateTimeoutSeconds >= 1 && config.accept.gateTimeoutSeconds <= 86400)) throw new LockerError("CONFIG", "accept.gateTimeoutSeconds must be a whole number of seconds from 1 to 86400");
   return config;
 }
@@ -97,25 +101,28 @@ function globToRegExp(pattern) {
 
 /** Run a project's own gate command on a clean checkout of exactly the commit being accepted, with the actor in its environment and a
  * timeout. Never a shell, never the working tree (ignored or excluded files there would count). */
+/** Run a command (no shell) in cwd with a timeout. Its own process group, so the timeout kills it and everything it started (a test
+ *  runner's browsers), and settled on exit, not close, so a grandchild holding the pipes cannot keep the caller waiting. */
+function runCommand([cmd, ...args], cwd, env, timeoutSeconds) {
+  return new Promise((done) => {
+    const c = spawn(cmd, args, { cwd, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...env } });
+    let output = "", settled = false;
+    const finish = (r) => { if (!settled) { settled = true; clearTimeout(t); done(r); } };
+    const killAll = () => { try { if (process.platform === "win32") spawn("taskkill", ["/T", "/F", "/PID", String(c.pid)], { stdio: "ignore" }); else process.kill(-c.pid, "SIGKILL"); } catch { try { c.kill("SIGKILL"); } catch { /* gone */ } } };
+    const t = setTimeout(() => { output += `\n(killed after ${timeoutSeconds} s)`; killAll(); finish({ code: 124, output }); }, timeoutSeconds * 1000);
+    c.stdout.on("data", (d) => { output += d; }); c.stderr.on("data", (d) => { output += d; });
+    c.on("error", (e) => finish({ code: 127, output: output + String(e) }));
+    c.on("exit", (code) => { killAll(); setTimeout(() => finish({ code: code ?? 137, output }), 50); });   // its stragglers die with it; a moment for the last output
+  });
+}
+
+/** The project's own gate, in a clean detached checkout of exactly the commit being accepted; never the working tree. */
 async function runGate(repo, head, actor) {
-  const [cmd, ...args] = repo.config.accept.gate;
   const dir = join(repo.gitDir, `locker-gate-${head.slice(0, 12)}`);
   await git(repo.top, ["worktree", "remove", "--force", dir], { allowFail: true });
   await git(repo.top, ["worktree", "add", "--detach", "--quiet", dir, head]);
-  try {
-    return await new Promise((done) => {
-      // its own process group, so a timeout kills the gate and everything it started (a test runner's browsers), and settled on exit,
-      // not close, so a grandchild holding the pipes cannot keep accept waiting
-      const c = spawn(cmd, args, { cwd: dir, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, SL_ACTOR: actor.name, SL_SESSION: actor.session, SL_GATE_COMMIT: head } });
-      let output = "", settled = false;
-      const finish = (r) => { if (!settled) { settled = true; clearTimeout(t); done(r); } };
-      const killAll = () => { try { if (process.platform === "win32") spawn("taskkill", ["/T", "/F", "/PID", String(c.pid)], { stdio: "ignore" }); else process.kill(-c.pid, "SIGKILL"); } catch { try { c.kill("SIGKILL"); } catch { /* gone */ } } };
-      const t = setTimeout(() => { output += `\n(gate killed after ${repo.config.accept.gateTimeoutSeconds} s)`; killAll(); finish({ code: 124, output }); }, repo.config.accept.gateTimeoutSeconds * 1000);
-      c.stdout.on("data", (d) => { output += d; }); c.stderr.on("data", (d) => { output += d; });
-      c.on("error", (e) => finish({ code: 127, output: output + String(e) }));
-      c.on("exit", (code) => { killAll(); setTimeout(() => finish({ code: code ?? 137, output }), 50); });   // its stragglers die with it; a moment for the last output
-    });
-  } finally { await git(repo.top, ["worktree", "remove", "--force", dir], { allowFail: true }); }
+  try { return await runCommand(repo.config.accept.gate, dir, { SL_ACTOR: actor.name, SL_SESSION: actor.session, SL_GATE_COMMIT: head }, repo.config.accept.gateTimeoutSeconds); }
+  finally { await git(repo.top, ["worktree", "remove", "--force", dir], { allowFail: true }); }
 }
 
 /** Files that are never trailing, whatever the patterns say: the config, the records, the attributes, the workflows, the guard. */
@@ -538,4 +545,38 @@ export async function find(repo, query) {
   const q = query.toLowerCase(); const hits = [];
   for (const kind of ["reviews", "live"]) for (const r of await listRecords(repo, kind)) if (JSON.stringify(r).toLowerCase().includes(q)) hits.push({ kind, id: r.id ?? r.path, path: r.path, verdict: r.verdict, created: r.created });
   return { query, hits };
+}
+
+// ---------- the restore drill ----------
+
+/** Is the remote truth branch enough to get the project back with plain git and nothing else? Push it to a fresh bare repository
+ *  (the "second remote"), clone from that without Sim Locker, check the commit, the config and the records came along, then run the
+ *  project's test command there. Fails with DRILL_FAILED and leaves the folders for a look; passes and removes them unless told to keep. */
+export async function drill(repo, { test = repo.config.drill.test, keep = false, dir } = {}) {
+  await freshen(repo, { force: true });
+  const { truth, remote } = repo.config;
+  const head = await revParse(repo.top, `${remote}/${truth}`);
+  if (!head) throw new LockerError("NOT_BACKED_UP", `${remote}/${truth} does not exist; there is nothing to restore from`);
+  const root = dir ? resolve(dir) : await mkdtemp(join(tmpdir(), "sl-drill-"));
+  const bare = join(root, "second.git"), clone = join(root, "restored");
+  await mkdir(root, { recursive: true });
+  await git(root, ["init", "--bare", "--quiet", "-b", truth, bare]);
+  await git(repo.top, ["push", "--quiet", bare, `${head}:refs/heads/${truth}`]);
+  await git(root, ["clone", "--quiet", bare, clone]);
+  const list = async (cwd, ref) => (await git(cwd, ["ls-tree", "-r", "--name-only", ref, "locker/"], { allowFail: true }) ?? "").split("\n").filter(Boolean);
+  const restored = await revParse(clone, "HEAD"), records = await list(clone, "HEAD"), expected = await list(repo.top, head);
+  const problems = [];
+  if (restored !== head) problems.push(`the restored clone is at ${restored}, not ${head}`);
+  if (!(await blobAt(clone, "HEAD", CONFIG))) problems.push(`${CONFIG} did not come along`);
+  if (records.length !== expected.length) problems.push(`${records.length} record file(s) restored, ${expected.length} on ${remote}/${truth}`);
+  let ran = null;
+  if (test) {
+    const r = await runCommand(test, clone, { SL_DRILL_COMMIT: head }, repo.config.drill.timeoutSeconds);
+    ran = { command: test.join(" "), code: r.code, lastLines: r.output.trim().split("\n").slice(-12).join("\n") };
+    if (r.code !== 0) problems.push(`the test command exited ${r.code}`);
+  }
+  const result = { truth: `${remote}/${truth}`, commit: head, secondRemote: bare, restoredClone: clone, records: records.length, test: ran ?? "none (no drill.test in locker.json and no command given)" };
+  if (problems.length) throw new LockerError("DRILL_FAILED", `restore drill failed: ${problems.join("; ")} (folders kept under ${root})`, { ...result, problems });
+  if (!keep) { await rm(root, { recursive: true, force: true }); result.secondRemote = result.restoredClone = `removed (${root}; pass --keep to keep them)`; }
+  return { drilled: true, ...result };
 }

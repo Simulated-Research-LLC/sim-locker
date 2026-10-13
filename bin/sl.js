@@ -24,17 +24,19 @@ const HELP = `sl: the truth store for a person and their agents. Git underneath,
                                     a new commit that undoes one; two steps
   sl live <commit>                  record that this commit is what people use
   sl find <words>                   search the records
+  sl drill [--keep] [--dir <d>] [-- <test command...>]
+                                    restore drill: push the truth branch to a fresh bare repo, clone it with plain git, run the tests there
   sl init [--project <name>] [--truth main] [--remote origin]
                                     make this clone managed (writes locker.json)
   sl clone <url> [dir]              clone and make it managed in one step
   sl merge-record %O %A %B %P       git merge driver for record files (installed by init)
 
 Every command needs SL_ACTOR set to one of the actors in locker.json. Add --json for machine output.
-Codes you will see: UNMANAGED, STALE, NOT FETCHED, TWO CLONES, LEASE HELD, STALE REVIEW, PUSH_REFUSED, NOT_BACKED_UP.`;
+Codes you will see: UNMANAGED, STALE, NOT FETCHED, TWO CLONES, LEASE HELD, STALE REVIEW, PUSH_REFUSED, NOT_BACKED_UP, DRILL_FAILED.`;
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true, strict: false,
-  options: { json: { type: "boolean" }, "no-fetch": { type: "boolean" }, message: { type: "string", short: "m" }, slice: { type: "string" }, verdict: { type: "string" }, findings: { type: "string", short: "f" }, review: { type: "string" }, confirm: { type: "string" }, project: { type: "string" }, truth: { type: "string" }, remote: { type: "string" }, help: { type: "boolean", short: "h" } },
+  options: { json: { type: "boolean" }, "no-fetch": { type: "boolean" }, message: { type: "string", short: "m" }, slice: { type: "string" }, verdict: { type: "string" }, findings: { type: "string", short: "f" }, review: { type: "string" }, confirm: { type: "string" }, keep: { type: "boolean" }, dir: { type: "string" }, project: { type: "string" }, truth: { type: "string" }, remote: { type: "string" }, help: { type: "boolean", short: "h" } },
 });
 const [cmd, ...args] = positionals;
 
@@ -56,7 +58,7 @@ function plain(o) {
     return lines.join("\n");
   }
   if (o && o.confirmRequired) return o.message;
-  return Object.entries(o).filter(([, v]) => v !== undefined && typeof v !== "object").map(([k, v]) => `${k}: ${v}`).join("\n") + (o.files ? `\nfiles: ${o.files.join(", ")}` : "") + (o.hits ? `\n${o.hits.map((h) => `${h.kind} ${h.id} ${h.verdict ?? ""} ${h.path}`).join("\n")}` : "") + (o.lease ? `\nlease: ${JSON.stringify(o.lease)}` : "") + (o.truth && typeof o.truth === "object" ? `\ntruth: ${JSON.stringify(o.truth)}` : "");
+  return Object.entries(o).filter(([, v]) => v !== undefined && typeof v !== "object").map(([k, v]) => `${k}: ${v}`).join("\n") + (o.files ? `\nfiles: ${o.files.join(", ")}` : "") + (o.hits ? `\n${o.hits.map((h) => `${h.kind} ${h.id} ${h.verdict ?? ""} ${h.path}`).join("\n")}` : "") + (o.lease ? `\nlease: ${JSON.stringify(o.lease)}` : "") + (o.truth && typeof o.truth === "object" ? `\ntruth: ${JSON.stringify(o.truth)}` : "") + (o.test && typeof o.test === "object" ? `\ntest: ${o.test.command} exited ${o.test.code}\n${o.test.lastLines}` : "");
 }
 
 async function main() {
@@ -74,7 +76,7 @@ async function main() {
   if (cmd === "init") { const r = await L.init(process.cwd(), { project: opt.project, truth: opt.truth, remote: opt.remote }); out({ managed: r.top, project: r.config.project, truth: r.config.truth }); return 0; }
 
   const repo = await L.openRepo(process.cwd());
-  const needActor = !["status", "backup", "pull", "find"].includes(cmd);
+  const needActor = !["status", "backup", "pull", "find", "drill"].includes(cmd);
   const actor = needActor ? await L.actorFromEnv(repo) : null;
   switch (cmd) {
     case "status": { const s = await L.status(repo, { fetch: !opt["no-fetch"] }); out(s); return s.problems.length ? 2 : 0; }
@@ -90,6 +92,7 @@ async function main() {
     case "revert": { const r = await L.revert(repo, actor, { commit: args[0], confirm: opt.confirm }); out(r); return r.confirmRequired ? 3 : 0; }
     case "live": out(await L.setLive(repo, actor, args[0])); return 0;
     case "find": out(await L.find(repo, args.join(" "))); return 0;
+    case "drill": out(await L.drill(repo, { test: args.length ? args : undefined, keep: opt.keep, dir: opt.dir })); return 0;
     default: throw new L.LockerError("USAGE", `unknown command "${cmd}"\n${HELP}`);
   }
 }

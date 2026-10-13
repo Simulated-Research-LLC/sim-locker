@@ -21,5 +21,12 @@
   "confirm": [
     "accept",
     "revert"
-  ]
+  ],
+  "drill": {
+    "test": [
+      "node",
+      "--test",
+      "test/"
+    ]
+  }
 }

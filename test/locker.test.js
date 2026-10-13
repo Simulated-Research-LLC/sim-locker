@@ -395,3 +395,35 @@ test("bootstrap: a project whose truth branch has no locker.json yet accepts the
   assert.match(e.message, /was on origin\/main before/);
   await L.lease(repo3, claude, "release");
 });
+
+test("the restore drill: a plain clone from a second remote carries the commit, the config and the records, and runs the tests", async () => {
+  const repo = await L.openRepo(A);
+  const dir = join(tmp, "drill-pass");
+  const r = await L.drill(repo, { test: [process.execPath, "-e", "console.log('tests ok'); process.exit(0)"], keep: true, dir });
+  assert.equal(r.drilled, true);
+  assert.equal(r.commit, sh(A, "rev-parse", "origin/main"));
+  assert.equal(sh(join(dir, "restored"), "rev-parse", "HEAD"), r.commit);
+  assert.ok(r.records > 0, "review records came along");
+  assert.equal(r.records, sh(A, "ls-tree", "-r", "--name-only", "origin/main", "locker/").split("\n").filter(Boolean).length);
+  assert.equal(r.test.code, 0); assert.match(r.test.lastLines, /tests ok/);
+  await assert.rejects(import("node:fs/promises").then((fs) => fs.stat(join(dir, "restored", ".git", "locker-session"))), "the restored clone is plain git, not a managed clone");
+  assert.throws(() => L.checkConfig({ project: "x", truth: "main", remote: "origin", actors: {}, drill: { test: "npm test" } }), /drill\.test must be a list/);
+  assert.throws(() => L.checkConfig({ project: "x", truth: "main", remote: "origin", actors: {}, drill: { timeoutSeconds: 0 } }), /drill\.timeoutSeconds/);
+  const none = await L.drill(repo, { test: null });
+  assert.match(none.test, /^none/); assert.match(none.restoredClone, /^removed/);
+});
+
+test("the restore drill fails on a failing test command and keeps the folders for a look", async () => {
+  const repo = await L.openRepo(A);
+  const dir = join(tmp, "drill-fail");
+  const e = await rejects(L.drill(repo, { test: [process.execPath, "-e", "console.error('boom'); process.exit(3)"], dir }), "DRILL_FAILED");
+  assert.match(e.message, /exited 3/); assert.match(e.message, /folders kept/);
+  assert.deepEqual(e.details.problems, ["the test command exited 3"]);
+  assert.match(e.details.test.lastLines, /boom/);
+  assert.equal(sh(join(dir, "restored"), "rev-parse", "HEAD"), e.details.commit);
+  repo.config.drill.timeoutSeconds = 1;                                      // a hung test runner is a failed drill, not a hung drill
+  const t0 = Date.now();
+  const slow = await rejects(L.drill(repo, { test: [process.execPath, "-e", "setTimeout(() => {}, 60000)"], dir: join(tmp, "drill-slow") }), "DRILL_FAILED");
+  assert.equal(slow.details.test.code, 124); assert.match(slow.details.test.lastLines, /killed after 1 s/);
+  assert.ok(Date.now() - t0 < 5000, "killed within the second, not after a minute");
+});
