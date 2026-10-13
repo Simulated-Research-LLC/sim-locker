@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 let tmp, remote, A, B, L, G;
 const sh = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim();
@@ -241,7 +241,10 @@ test("the merge driver that init installs works without sl on PATH, and status -
 test("the guard passes commits made through the tool or by a human and fails raw pushes and forced pushes", async () => {
   const { guard } = await import("../bin/sl-guard.js");
   const first = sh(A, "rev-list", "--max-parents=0", "main");
-  const all = await guard(A, { before: first, after: "main" });
+  const noConfig = await guard(A, { before: first, after: "main" });
+  assert.ok(noConfig.problems.some((p) => p.startsWith("NO CONFIG")), "a before-commit without locker.json trusts nobody");
+  const managed = sh(A, "log", "--diff-filter=A", "--format=%H", "main", "--", "locker.json").trim();
+  const all = await guard(A, { before: managed, after: "main" });
   // one raw commit is on main from the staleness test above ("B moves main", by plain git as "t"); the guard must name exactly that one
   assert.equal(all.problems.length, 1, all.problems.join("|")); assert.match(all.problems[0], /^RAW PUSH .* by "t".*B moves main/);
   assert.ok(all.commits.filter((c) => c.ok).length >= 3, "the rick save, the accept and the revert pass");
@@ -252,5 +255,18 @@ test("the guard passes commits made through the tool or by a human and fails raw
   assert.equal(raw.ok, false); assert.ok(raw.problems.some((p) => p.startsWith("RAW PUSH")), raw.problems.join("|"));
   const forced = await guard(A, { before: "main^", after: "main^", forced: true });
   assert.ok(forced.problems.some((p) => p.startsWith("FORCED PUSH")));
+  // a raw push that also adds its author as human is checked against the list BEFORE the push
+  const cfg = JSON.parse(await readFile(join(A, "locker.json"), "utf8")); cfg.actors.mallory = "human";
+  await writeFile(join(A, "locker.json"), JSON.stringify(cfg, null, 2) + "\n");
+  execFileSync("git", ["-c", "user.name=mallory", "-c", "user.email=m@m", "commit", "-qam", "promote myself"], { cwd: A });
+  const promoted = await guard(A, { before: "main~2", after: "main" });
+  assert.equal(promoted.commits.filter((c) => !c.ok).length, 2, JSON.stringify(promoted));
+  // run as a program, the way the workflow runs it
+  const script = new URL("../bin/sl-guard.js", import.meta.url).pathname;
+  const res = spawnSync(process.execPath, [script, sh(A, "rev-parse", "main~2"), "main"], { cwd: A, encoding: "utf8" });
+  assert.equal(res.status, 1); assert.match(res.stdout, /guard: 2 problem\(s\)/);
+  const good = spawnSync(process.execPath, [script, sh(A, "rev-parse", "main~3"), "main~2"], { cwd: A, encoding: "utf8" });
+  assert.equal(good.status, 0, good.stdout);
+  sh(A, "reset", "--quiet", "--hard", "main~2");
   sh(A, "reset", "--quiet", "--hard", "main^");
 });

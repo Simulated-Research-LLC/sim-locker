@@ -1,0 +1,27 @@
+{
+ "id": "rev_0d06405c214e",
+ "kind": "review",
+ "range": {
+  "from": "a8e6995063044988f34635522cba1e73b360595a",
+  "to": "647bc2a7d4feaa36df2f969a821032eb59e53349"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "fix",
+ "findings": "npm test passes 15 of 15. Must fix before main: (1) README.md:60 says to install the same two files in any project, but bin/sl-guard.js:8 imports ../src/git.js and the workflow runs node bin/sl-guard.js, so in another project the guard crashes and every push opens an issue; say what must be copied or make the guard self-contained. (2) bin/sl-guard.js:30 isMain compares the URL to argv[1] split on a forward slash; on Windows argv[1] uses backslashes, so node bin\\sl-guard.js does nothing and exits 0, a silent pass; compare fileURLToPath(import.meta.url) with path.resolve(process.argv[1]). (3) guard-main.yml:1-3 says a forced push or a bypassing commit is never silent, which overclaims: the guard reads locker.json (bin/sl-guard.js:14) and its own code from the pushed commit, so a raw push that edits locker.json to add itself as human, or edits the guard or workflow, passes; and any commit with author name rick or any hand typed Locker-Actor value passes. Reword to what it does, and read locker.json from the before commit (git show before:locker.json) to match DESIGN rule 4. Notes, not blocking: ASTRA_BRIEF.md:20 still says refs/locker/*; the human check matches author name to actor name, so Rick committing with his real git name would be flagged, worth one line in the README; every lease write is an orphan commit, so a future GitHub ruleset that blocks force pushes on all branches would break the lease; if locker/lease were ever checked out, freshen (src/locker.js:94) cannot fetch into it and then deletes the local ref, which fails safe as LEASE_RACE but status would show no lease; a slice named locker would collide with the locker/lease branch. The lease move itself is correct: freshen fetches the branch into the same local name, and the --force-with-lease guard at src/locker.js:146 names LEASE_REF. The workflow is valid, permissions cover gh issue create, the forced expression yields --forced or nothing, PIPESTATUS[0] is the node exit code under set +e, and the run fails only when the guard fails. locker.json is valid; the reviewer agent is explained only in AGENTS.md and CLAUDE.md open questions; since SL_ACTOR is free, the same agent can review as reviewer and accept as claude, so the different-actor rule gives no real separation for agents, which is Rick's call.",
+ "cited": {
+  ".gitattributes": "6dac554badde18e51dd48240e2d41d894b0119ee",
+  ".github/workflows/guard-main.yml": "fadd4df7db2177b76dc8ae09c8acdab2cb756d09",
+  "AGENTS.md": "d656ec1b2d052061238a3f39a194dad559f6887e",
+  "ASTRA_BRIEF.md": "1e9b959682c1599ee4cd1629d3b6caf296ab3711",
+  "CLAUDE.md": "d656ec1b2d052061238a3f39a194dad559f6887e",
+  "DESIGN.md": "60b73015a5e54df15032b2dc235d2e21c8aef4d1",
+  "README.md": "a15c97729e7c87b940f1ee97e4873ee90f0006aa",
+  "bin/sl-guard.js": "4a9ba07265d6e751fb822c5926beacf2609e81d8",
+  "locker.json": "f84efba874a38ffe5d7de8d4790c30fe2894cc2f",
+  "src/locker.js": "4334fef5e2570ad703920797914ecb6af0bf5d67",
+  "test/locker.test.js": "4b4e0a8b3ab63af327ee6f69dfa32032852f34ae"
+ },
+ "created": "2026-10-13T03:33:29.060Z"
+}

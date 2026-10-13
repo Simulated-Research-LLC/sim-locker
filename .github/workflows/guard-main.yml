@@ -1,6 +1,8 @@
 # The tripwire for the truth branch. Runs on every push to main. It cannot refuse a push (that needs branch protection, which
-# needs GitHub Pro on a private personal repo and cannot be set from the cloud session); it makes a bad push fail loudly and
-# opens an issue, so a forced push or a commit that bypassed Sim Locker is never silent.
+# needs GitHub Pro on a private personal repo and cannot be set from the cloud session). It fails the run and opens an issue when
+# the push was forced, or when a new commit has no Locker-Actor trailer and its author is not a human actor in the locker.json of
+# the commit before the push. It does not catch a hand-typed trailer, a raw commit under a human actor's name, or a push that
+# also edits this workflow or bin/sl-guard.js; those stay visible in the log. bin/sl-guard.js stands alone: copy these two files.
 name: guard main
 on:
   push:
