@@ -1,0 +1,28 @@
+{
+ "id": "rev_d8ea1064867b",
+ "kind": "review",
+ "range": {
+  "from": "d0451d314d2791c4bbe9f36729bd615857ce29d3",
+  "to": "9183cabab58ae010edc02138bcf673af95294818"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791901492",
+ "verdict": "pass",
+ "findings": "Rerun on 9183cab, whose only code change is src/locker.js:116 calling killAll in the gate's exit handler. npm test passes 17 of 17; npm run lines 865. The background child case now holds: a gate of sh -c '(sleep 4; echo alive > file) & exit 0' was accepted and the file was never written, so the child died with the gate. The timeout cases still hold: sleep 10, sh -c 'sleep 10; echo done' and node spawning sleep 10, each with gateTimeoutSeconds 2, returned GATE_FAILED exit 124 'killed after 2 s' in 2.1 to 2.2 s with the worktree removed. Notes, not blocking: on Windows, taskkill /T run after the gate has exited may not find children whose parent is gone, so the exit kill there is best effort; the 50 ms wait after exit can still drop a busy gate's last lines from the message; and from the earlier records, a fetch url that differs from the push url lets accept read the config from one place and push to another, same class as raw git.",
+ "cited": {
+  "AGENTS.md": "7dea298c7802f340037a35075d3d780d12b904dc",
+  "CLAUDE.md": "7dea298c7802f340037a35075d3d780d12b904dc",
+  "DESIGN.md": "a89c5d0708c9a64f6b130d274070c4aea4ded304",
+  "README.md": "f45af856e6ccd46ea09c106ea8936230da5b5d9a",
+  "locker/reviews/rev_4b1349d5b585.json": "e45ae2eae921fef9131e3d426906c221b6bb982f",
+  "locker/reviews/rev_6896375580f5.json": "ed742729d8d8e37ff9a47a7f8bab364f138e86a7",
+  "locker/reviews/rev_78eb1358b585.json": "816d18d04533e50d479daf215a7d84133d65ed35",
+  "package-lock.json": "9271a77a246bcce55f03398a7e8696a7fb02666d",
+  "package.json": "2a61f30384116e688699f7f6f7de609397b64779",
+  "src/locker.js": "e4ef331f2f7d9167695cebab368e9b6e23dcf0fd",
+  "src/mcp.js": "e0717529e6a5713b58fc00871077f8ba969e9d58",
+  "test/locker.test.js": "2c48b40ec6a9eb8422239629e572c2cb6484c65b"
+ },
+ "created": "2026-10-13T14:24:52.744Z"
+}

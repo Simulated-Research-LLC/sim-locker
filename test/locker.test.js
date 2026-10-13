@@ -271,3 +271,95 @@ test("the guard passes commits made through the tool or by a human and fails raw
   assert.equal(good.status, 0, good.stdout);
   sh(A, "reset", "--quiet", "--hard", "main~2");
 });
+
+test("accept.trailing lets a configured record file change after the review; accept.gate runs the project's own check on the exact commit", async () => {
+  const repo = await L.openRepo(A);
+  const claude = await L.actorFromEnv(repo, env("claude", "c1"));
+  const astra = await L.actorFromEnv(repo, env("astra", "a1"));
+  const rick = await L.actorFromEnv(repo, env("rick", "s1"));
+  sh(A, "checkout", "--quiet", "main");
+  const cfg = JSON.parse(await readFile(join(A, "locker.json"), "utf8"));
+  cfg.accept = { gate: [process.execPath, "gate.js"], trailing: ["**/rows.md"], gateTimeoutSeconds: 20 };
+  await writeFile(join(A, "locker.json"), JSON.stringify(cfg, null, 2) + "\n");
+  // the gate passes only when the committed tree has feature.txt and no gate-block; it must never see the working tree
+  await writeFile(join(A, "gate.js"), "const fs = require('fs'); const ok = fs.existsSync('feature.txt') && !fs.existsSync('gate-block'); console.log(ok ? 'gate: fine' : 'gate: NOT FINE'); process.exit(ok ? 0 : 3);\n");
+  await mkdir(join(A, "ledger"), { recursive: true }); await writeFile(join(A, "ledger/rows.md"), "| v | outcome |\n");
+  await L.save(repo, rick, { message: "gate and ledger" }); await L.backup(repo);
+  // a trailing pattern that would cover locker/ is refused at load
+  const bad = { ...cfg, accept: { ...cfg.accept, trailing: ["**"] } };
+  await writeFile(join(A, "locker.json"), JSON.stringify(bad, null, 2) + "\n");
+  await L.save(repo, rick, { message: "bad trailing" }); await L.backup(repo);
+  await rejects(L.openRepo(A), "CONFIG");
+  await L.revert(await L.openRepo(A).catch(() => repo), rick, { commit: "HEAD", confirm: (await L.revert(repo, rick, { commit: "HEAD" })).token });
+  await L.backup(repo);
+  const repo2 = await L.openRepo(A); assert.deepEqual(repo2.config.accept.trailing, ["**/rows.md"]);
+  // the slice: a change plus a blocker, a review, then the ledger row after the review (allowed)
+  await writeFile(join(A, "feature.txt"), "f\n"); await writeFile(join(A, "gate-block"), "");
+  await L.save(repo2, claude, { message: "feature with a blocker", slice: "slice/gated" });
+  const rv = await L.review(repo2, astra, { from: "main", to: "slice/gated", verdict: "pass", findings: "fine" });
+  await writeFile(join(A, "ledger/rows.md"), "| v | outcome |\n| 1 | feature |\n");
+  await L.save(repo2, claude, { message: "review and ledger row" });
+  await L.backup(repo2); await L.lease(repo2, claude, "acquire");
+  let first = await L.accept(repo2, claude, { slice: "slice/gated", reviewId: rv.id });
+  assert.equal(first.confirmRequired, true); assert.match(first.gate, /gate\.js will run/);
+  // the gate runs at the confirm step, on the committed tree: gate-block is in it, so it refuses with its own words
+  const g = await rejects(L.accept(repo2, claude, { slice: "slice/gated", reviewId: rv.id, confirm: first.token }), "GATE_FAILED");
+  assert.match(g.message, /NOT FINE/);
+  assert.equal(sh(A, "rev-parse", "main"), sh(A, "rev-parse", "origin/main"), "a failed gate moves nothing");
+  // committing the removal after the review is a code change, so the review is stale until a new one
+  sh(A, "rm", "-q", "gate-block"); await L.save(repo2, claude, { message: "remove the blocker" });
+  await rejects(L.accept(repo2, claude, { slice: "slice/gated", reviewId: rv.id }), "REVIEW_STALE");
+  const rv2 = await L.review(repo2, astra, { from: "main", to: "slice/gated", verdict: "pass", findings: "fine now" });
+  await L.save(repo2, claude, { message: "review 2" }); await L.backup(repo2);
+  // a forged local origin/main with the gate switched off changes nothing: accept re-reads the config from the remote after its fetch
+  const forged = { ...repo2.config, accept: { gate: null, trailing: ["**/rows.md"] } };
+  const tmpCfg = join(tmp, "forged.json"); await writeFile(tmpCfg, JSON.stringify(forged));
+  const fblob = execFileSync("git", ["hash-object", "-w", tmpCfg], { cwd: A, encoding: "utf8" }).trim();
+  const tree = execFileSync("git", ["mktree"], { cwd: A, encoding: "utf8", input: `100644 blob ${fblob}\tlocker.json\n` }).trim();
+  const fcommit = execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@f", "commit-tree", tree, "-p", sh(A, "rev-parse", "origin/main"), "-m", "forged"], { cwd: A, encoding: "utf8" }).trim();
+  sh(A, "update-ref", "refs/remotes/origin/main", fcommit);
+  const repo3 = await L.openRepo(A); assert.equal(repo3.config.accept.gate, null, "the forged tracking ref is what openRepo sees");
+  await writeFile(join(A, "gate-block"), "");                                             // untracked and excluded, so the tree stays clean: the gate must not see it
+  await writeFile(join(A, ".git/info/exclude"), "gate-block\n");
+  first = await L.accept(repo3, claude, { slice: "slice/gated", reviewId: rv2.id });
+  assert.match(first.gate ?? "", /gate\.js will run/, "the real config, fetched from the remote, still has the gate");
+  const done = await L.accept(repo3, claude, { slice: "slice/gated", reviewId: rv2.id, confirm: first.token });
+  assert.equal(done.accepted, true);
+  assert.match(sh(A, "show", "main:ledger/rows.md"), /feature/);
+  assert.throws(() => sh(A, "show", "main:gate-block"));
+  await L.lease(repo3, claude, "release");
+});
+
+test("a gate that hangs is killed with everything it started, and protected files are never trailing whatever the pattern says", async () => {
+  const repo = await L.openRepo(A);
+  const claude = await L.actorFromEnv(repo, env("claude", "c1"));
+  const astra = await L.actorFromEnv(repo, env("astra", "a1"));
+  const rick = await L.actorFromEnv(repo, env("rick", "s1"));
+  sh(A, "checkout", "--quiet", "main");
+  const cfg = JSON.parse(await readFile(join(A, "locker.json"), "utf8"));
+  for (const bad of ["locker/reviews/rev_a*.json", "locker/live/live.json", ".github/workflows/guard-main.yml", "bin/sl-guard.js", "*.json", "locker/*.record.json"])
+    assert.throws(() => L.checkConfig({ ...cfg, accept: { trailing: [bad] } }), (e) => e.code === "CONFIG", bad);
+  for (const bad of [0, 1.5, 1e9, "9"]) assert.throws(() => L.checkConfig({ ...cfg, accept: { gateTimeoutSeconds: bad } }), (e) => e.code === "CONFIG", String(bad));
+  assert.equal(L.checkConfig({ ...cfg, accept: { trailing: ["**/rows.md", "vault/00 Start/Delivery ledger.md"] } }).accept.gateTimeoutSeconds, 900);
+  // a pattern that passes the load check (it starts with a glob) but reaches a protected file: the file is still refused at accept
+  cfg.accept = { gate: ["sh", "-c", "sleep 30; echo done"], gateTimeoutSeconds: 1, trailing: ["**/*.md", "**/guard-main.yml"] };
+  await writeFile(join(A, "locker.json"), JSON.stringify(cfg, null, 2) + "\n");
+  await mkdir(join(A, ".github/workflows"), { recursive: true }); await writeFile(join(A, ".github/workflows/guard-main.yml"), "on: push\n");
+  await L.save(repo, rick, { message: "slow gate, wide trailing" }); await L.backup(repo);
+  const repo2 = await L.openRepo(A);
+  await writeFile(join(A, "thing.txt"), "t\n"); await L.save(repo2, claude, { message: "thing", slice: "slice/slow" });
+  const rv = await L.review(repo2, astra, { from: "main", to: "slice/slow", verdict: "pass", findings: "ok" });
+  await writeFile(join(A, ".github/workflows/guard-main.yml"), "on: workflow_dispatch\n");     // matches **/guard-main.yml, but the workflow is protected
+  await L.save(repo2, claude, { message: "review and a workflow change" }); await L.backup(repo2); await L.lease(repo2, claude, "acquire");
+  await rejects(L.accept(repo2, claude, { slice: "slice/slow", reviewId: rv.id }), "REVIEW_STALE");
+  sh(A, "reset", "--quiet", "--hard", "HEAD^");
+  const rv2 = await L.review(repo2, astra, { from: "main", to: "slice/slow", verdict: "pass", findings: "ok" });
+  await writeFile(join(A, "notes.md"), "n\n");
+  await L.save(repo2, claude, { message: "review and a note" });
+  await rejects(L.backup(repo2), "PUSH_REFUSED");                                          // the slice diverged from its backed-up copy; the tool never forces
+  const first = await L.accept(repo2, claude, { slice: "slice/slow", reviewId: rv2.id });
+  const t0 = Date.now();
+  const g = await rejects(L.accept(repo2, claude, { slice: "slice/slow", reviewId: rv2.id, confirm: first.token }), "GATE_FAILED");
+  assert.match(g.message, /killed after 1 s/); assert.ok(Date.now() - t0 < 5000, `accept returned after ${Date.now() - t0} ms`);
+  await L.lease(repo2, claude, "release");
+});

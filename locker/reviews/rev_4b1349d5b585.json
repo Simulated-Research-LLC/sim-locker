@@ -1,0 +1,23 @@
+{
+ "id": "rev_4b1349d5b585",
+ "kind": "review",
+ "range": {
+  "from": "d0451d314d2791c4bbe9f36729bd615857ce29d3",
+  "to": "bcc3ebe146da90f20305419cfe0929453a38e529"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791900616",
+ "verdict": "fix",
+ "findings": "npm test passes 16 of 16. Must change before main: (1) The gate does not test the slice. runGate (src/locker.js:84) runs in repo.top, which is whatever branch is checked out, and accept never checks that it is the slice. Reproduced: a slice whose gate fails is refused with GATE_FAILED when accept runs on the slice, then accepted to the remote main with the failing file when the same accept runs with main checked out. Ignored and excluded files also count: the test (test/locker.test.js:302) makes the gate pass with a gate-ok file in .git/info/exclude that is never in the accepted commit, so the test shows the hole instead of guarding against it. Run the gate in a clean temporary worktree of the head sha (git worktree add --detach), and merge that sha at :432 instead of the branch name, so nothing the gate does can change what is merged. (2) openRepo reads accept.gate and accept.trailing from the local tracking ref origin/main (:41) before accept's own fetch (:396), and accept never re-reads them. Reproduced with local plumbing only (hash-object, mktree, commit-tree, update-ref refs/remotes/origin/main, no push): the config came back as gate null and trailing ** and accept put an unreviewed evil.js and a changed feature.txt on the remote main under an honest Locker-Actor trailer, so neither branch protection nor the guard sees it. Same class as C2, but this change turns it into switching off the gate and reopening H1; re-read the config from the remote truth after the fetch in accept. (3) trailing has no limits: any status (A, M, D), any path, and ** or a top level *.md (CLAUDE.md, AGENTS.md) or locker/** or locker.json or the gate's own script all pass, so README.md:96 'review records themselves may only be added. Nothing else may change after the review' holds only for careful patterns. Refuse patterns that match locker.json or anything under locker/, and say in the README that a trailing file the slice already touched before the review still trips the cited check. (4) globToRegExp (:76) does not escape ?, so v?.md matches .md and v.md and not v1.md; ** only matches across slashes, so **/x.md misses a top level x.md. a.b, [x] and * behave as expected. (5) No timeout on the gate: a hung gate hangs accept with the lease held; add one. The gate runs on both steps before requireConfirm (:421, :427), so a gate longer than the 10 minute token life makes the confirm step fail BAD_CONFIRM every time; run it once on the confirm step only, or check the token first and run the gate after. A failing gate does not consume the token, which is right. Should change: --name-status output is C-quoted for a tab or any non-ASCII byte (a tab gives \"a\\tb.md\", a Korean name gives octal escapes), which fails closed but means a non-ASCII ledger can never be trailing; use -z. DESIGN.md:3 still says Version 0.1. On Windows spawn without a shell cannot run npm.cmd, so the README example should keep to node. Version strings in json and js are all 0.2.0, no em dashes in the changed files, 827 lines. Outside this diff and not caused by it: a review record is a file the acceptor commits, so the acceptor can write or rewrite one naming another reviewer (reproduced: a fix verdict edited to pass before its first commit was accepted with trailing set to ledger/*.md); the add-only rule cannot see it because the edit folds into the add.",
+ "cited": {
+  "DESIGN.md": "8d5d892028e6489ba0d875f407a415886771f14d",
+  "README.md": "711edbbb4e0a31d5fe2a0fa31b88278dd56d052e",
+  "package-lock.json": "9271a77a246bcce55f03398a7e8696a7fb02666d",
+  "package.json": "2a61f30384116e688699f7f6f7de609397b64779",
+  "src/locker.js": "ab52b6b4587dce58a92e9424eb7a6c59694a7b5a",
+  "src/mcp.js": "e0717529e6a5713b58fc00871077f8ba969e9d58",
+  "test/locker.test.js": "832f5f9d262a126e066406270bad13ed393b9e18"
+ },
+ "created": "2026-10-13T14:10:17.057Z"
+}

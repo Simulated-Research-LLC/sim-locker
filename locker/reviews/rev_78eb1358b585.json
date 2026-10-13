@@ -1,0 +1,26 @@
+{
+ "id": "rev_78eb1358b585",
+ "kind": "review",
+ "range": {
+  "from": "d0451d314d2791c4bbe9f36729bd615857ce29d3",
+  "to": "003ba4b9c6020fc5738949ccf2e91a568f7d63b0"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791901073",
+ "verdict": "fix",
+ "findings": "npm test passes 16 of 16; npm run lines 850; versions 0.2.0 in package.json, package-lock.json and src/mcp.js; no em dashes in the diff. The range has two commits, not three. Of the five must-change items of rev_4b1349d5b585, items 1, 2 and 4 hold against real bare remotes: a gate that needs a gitignored and info/exclude'd gate-ok file refused GATE_FAILED and main did not move; a forged refs/remotes/origin/main with gate null still showed and ran the gate from the remote config; v?.md now matches only the literal v?.md, a.b only a.b, and **/rows.md matches rows.md and ledger/rows.md but not xrows.md; the gate ran only at the confirm step (a marker file was absent after step one). Must change: (A) items 3 and 5 are not fixed in the code. src/locker.js:50 tests each trailing pattern against five sample paths, so **, locker/**, *.json, .github/** and locker.json are refused but locker/reviews/rev_a*.json, an exact review id, locker/live/live.json, locker/*.record.json, .github/workflows/guard-main.yml, .github/workflows/*.yaml and bin/sl-guard.js all load. Reproduced end to end with trailing .github/workflows/guard-main.yml plus an exact locker/reviews/rev_<id>.json: a slice changed the guard workflow to on: workflow_dispatch and rewrote an already accepted review record from pass to block after its review, and accept put both on the remote main. README.md:96 says those patterns are refused and review records may only be added; neither is true. Check the changed file, not the pattern: at :440 never let trailing cover locker.json, anything under locker/, .gitattributes, .github/ or the guard, whatever the pattern. (B) The gate timeout at :101 kills only the direct child and the promise waits for close at :104, which needs every holder of the pipes to exit. sh -c 'sleep 10; echo done' and node spawning sleep 10 with timeout 2 were both reported killed after 2 s but accept returned after 10.2 s, and the grandchild kept running; plain sleep 10 returned in 2.2 s. A real gate (a test runner, a browser) spawns children, so a hung one still hangs accept with the lease held. Spawn detached and kill the process group (taskkill /T on Windows), and settle on exit, not only close. Should change: there is no test for the timeout or for any refused pattern except ** (CLAUDE.md rule 8); gateTimeoutSeconds is not validated (0 or over 2^31 ms kills at once, which fails closed but silently); README.md:142 says about 820 lines, it is 850; test/locker.test.js:322 says excluded from nothing and then excludes the file. Noted, same class as raw git: setting origin's fetch url to an attacker mirror and its push url to the real remote still switches the gate off, because accept fetches the config from the url and pushes to the pushurl; reproduced, the real main got the slice plus a config commit authored rick with gate null, then accept threw NOT_BACKED_UP after the real push had landed. Refusing a pushurl that differs from the url, or ls-remote against the push url, would close it.",
+ "cited": {
+  "AGENTS.md": "7dea298c7802f340037a35075d3d780d12b904dc",
+  "CLAUDE.md": "7dea298c7802f340037a35075d3d780d12b904dc",
+  "DESIGN.md": "a89c5d0708c9a64f6b130d274070c4aea4ded304",
+  "README.md": "6b56f82f5fef28bc31d598af72f9e7fca7820d49",
+  "locker/reviews/rev_4b1349d5b585.json": "e45ae2eae921fef9131e3d426906c221b6bb982f",
+  "package-lock.json": "9271a77a246bcce55f03398a7e8696a7fb02666d",
+  "package.json": "2a61f30384116e688699f7f6f7de609397b64779",
+  "src/locker.js": "bf503df551af7eeccb4c501dbc974c7bef9fb327",
+  "src/mcp.js": "e0717529e6a5713b58fc00871077f8ba969e9d58",
+  "test/locker.test.js": "81248fd1fdf60ccd9395949add94c63b1cec5fd9"
+ },
+ "created": "2026-10-13T14:17:54.124Z"
+}
