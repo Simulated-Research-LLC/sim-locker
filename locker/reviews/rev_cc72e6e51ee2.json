@@ -1,0 +1,20 @@
+{
+ "id": "rev_cc72e6e51ee2",
+ "kind": "review",
+ "range": {
+  "from": "423a6841a8799ed5690d9d131844e63d4bed1399",
+  "to": "89f2594a6bcb2f567ae5ac64aec0956349abc8a4"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791870128",
+ "verdict": "pass",
+ "findings": "Both findings of rev_4b8e270cc773 are answered. README.md:58 now gives Pro for a private repo under a personal account and quotes the About rulesets page word for word (checked by fetching the page: available in public repositories with GitHub Free and in public and private repositories with GitHub Pro, GitHub Team, and GitHub Enterprise Cloud). The settings page warning is stated as what this repo's settings page showed while private on 2026-10-12, not as a general rule, and the page does not contradict it; it cannot be reproduced now that the repo is public. API checks: private is false (owner type User); rules/branches/main lists deletion, non_fast_forward and required_linear_history, all from ruleset 24973232; the ruleset is active, bypass_actors is empty, condition include ~DEFAULT_BRANCH; rules/branches/locker/lease is empty. Two small notes, neither false: README.md:58 cites rules/branches/main as the source for active and no bypass list, which come from rulesets/24973232; and targets main only is true because the condition is the default branch, which is main today. Dates in DESIGN.md:27 and docs/review-0.1.md:11 are Denver time (ruleset created 2026-10-13T05:35Z). npm test: 15 pass, 0 fail. No em dashes in the changed files.",
+ "cited": {
+  "DESIGN.md": "b62ccc31b8da71bd171edb265305bf481c6d545e",
+  "README.md": "6800a75401fe7c946cf1aa5cca112ace3a7bd80b",
+  "docs/review-0.1.md": "8dddac7ca746330b38afed16281f6220ab6dbfa2",
+  "locker/reviews/rev_4b8e270cc773.json": "b850d4015aeb40ef4fede2755428510b4fb59783"
+ },
+ "created": "2026-10-13T05:42:08.262Z"
+}
