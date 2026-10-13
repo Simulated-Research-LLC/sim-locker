@@ -378,7 +378,7 @@ export async function status(repo, { fetch = true } = {}) {
   const onTruth = branch === truthName, passed = reviews.find((r) => (r.to === slice.head || r.to === reviewedHead) && r.verdict === "pass");
   let step;
   if (branch === "HEAD") step = `not on a branch: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName})`;
-  else if (onTruth && truth.stale) step = `${truthName} is behind: sl pull first`;
+  else if (onTruth && truth.stale) step = dirty.length ? `${truthName} is behind and ${dirty.length} file(s) not saved: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName}), then sl pull` : `${truthName} is behind: sl pull first`;
   else if (dirty.length) step = `${dirty.length} file(s) not saved: sl save -m "<what and why>"${onTruth ? ` --slice <name> (only ${humans} saves on ${truthName} itself)` : ""}`;
   else if (!slice.backedUp) step = `saved, not backed up: sl backup`;
   else if (onTruth) step = slice.live.applies && slice.live.commit !== slice.head ? `${truthName} is backed up; when this version is what people use: sl live ${slice.head.slice(0, 7)}` : `nothing waiting; ${truthName} is backed up`;
@@ -397,10 +397,20 @@ export async function save(repo, actor, { message, paths = [], slice } = {}) {
   const before = await currentBranch(repo.top);
   if (slice !== undefined) checkSliceName(repo, slice);
   // a stale truth branch refuses a save on itself; a slice is its own line, and a new one starts from the remote's truth, so it is never stale
-  if (truth.stale && (slice ?? before) === repo.config.truth) throw new LockerError("STALE", `${repo.config.truth} here is ${truth.behind} save(s) behind the remote`, { next: "sl pull" });
+  if (truth.stale && (slice ?? before) === repo.config.truth) {
+    const dirty = !(await isClean(repo.top));
+    throw new LockerError("STALE", `${repo.config.truth} here is ${truth.behind} save(s) behind the remote${dirty ? ", and it has changes not yet saved" : ""}`, { next: dirty ? `sl save -m "<what and why>" --slice <name> (a new slice starts from the remote's ${repo.config.truth}), then sl pull` : "sl pull" });
+  }
+  let note;
   if (slice && slice !== before) {
     const exists = await revParse(repo.top, `refs/heads/${slice}`);
-    await git(repo.top, exists ? ["checkout", "--quiet", slice] : ["checkout", "--quiet", "-b", slice, truth.remote ?? repo.config.truth]);
+    if (exists) await git(repo.top, ["checkout", "--quiet", slice]);
+    else if (truth.remote && (await git(repo.top, ["checkout", "--quiet", "-b", slice, truth.remote], { allowFail: true })) === null) {
+      // the unsaved change touches a file the remote also changed, so the new slice cannot start from the remote's truth; it starts
+      // from the local one instead and is simply behind, which accept handles from the merge base
+      await git(repo.top, ["checkout", "--quiet", "-b", slice, repo.config.truth]);
+      note = `the slice starts from the local ${repo.config.truth}, ${truth.behind} save(s) behind the remote, because the unsaved change touches a file the remote also changed`;
+    } else if (!truth.remote) await git(repo.top, ["checkout", "--quiet", "-b", slice, repo.config.truth]);
   }
   const branch = await currentBranch(repo.top);                       // what git says, not what the caller said
   if (branch === "HEAD") throw new LockerError("DETACHED", "this folder is not on a branch, so there is nowhere to save to", { next: `sl save -m "<what and why>" --slice <name>` });
@@ -412,7 +422,7 @@ export async function save(repo, actor, { message, paths = [], slice } = {}) {
   await git(repo.top, [...ident(actor), "commit", "--quiet", "-F", "-"], { input: body });
   const head = await revParse(repo.top, "HEAD");
   const files = (await git(repo.top, ["show", "--name-only", "--format=", head])).split("\n").filter(Boolean);
-  return { saved: true, branch, head, actor: actor.name, files, ...(f.fresh ? {} : { warning: `NOT FETCHED: ${f.reason}` }) };
+  return { saved: true, branch, head, actor: actor.name, files, ...(note ? { note } : {}), ...(f.fresh ? {} : { warning: `NOT FETCHED: ${f.reason}` }) };
 }
 
 /** backed up: push the current branch and prove it arrived by asking the remote for the ref. The push exit code alone is not evidence. */

@@ -35,7 +35,7 @@ Or make an existing clone managed with `sl init` inside it. `init` writes `locke
 
 ```
 export SL_ACTOR=claude
-sl save -m "boss hp x1.25" --slice slice/boss-hp     # saved, on a new slice branch made from main
+sl save -m "boss hp x1.25" --slice slice/boss-hp     # saved, on a new slice branch made from the remote's main
 sl backup                                            # backed up: pushed, then fetched back and compared
 export SL_ACTOR=astra
 sl review main..slice/boss-hp --verdict pass -f "numbers match the probe output"
@@ -68,7 +68,7 @@ The lease lives on the branch `locker/lease`, not a custom ref, because some pro
 | `UNMANAGED` | not a git clone, or no `locker.json`. Sim Locker will not work in a loose folder. This is the 0.41.2 folder sitting beside a 0.41.6 repo, made impossible |
 | `CONFIG FROM WORKING TREE` (status) | `locker.json` is not on the remote `main` yet, so the actors are not settled; save and back it up |
 | `BAD_SLICE` | a slice name must look like `slice/boss-hp`: no `HEAD`, `refs/`, `main`, `done/`, or `..` |
-| `STALE` | `main` here is behind the remote. `sl pull` first. A save on `main` itself and `accept` refuse until then; a save on a slice goes ahead, and a new slice starts from the remote's `main`, so it is never behind |
+| `STALE` | `main` here is behind the remote. `sl pull` first. A save on `main` itself and `accept` refuse until then; a save on a slice goes ahead, and a new slice starts from the remote's `main`, so it is never behind (when the unsaved change touches a file the remote also changed, the slice starts from the local `main` instead and the save says so; local saves on `main` not yet backed up are not carried onto a new slice) |
 | `NOT FETCHED` | it could not reach the remote, so ahead/behind may be wrong. Said on the first line, never hidden |
 | `TWO CLONES` | the same project is cloned twice on this machine. One machine, one clone |
 | `AGENT_ON_TRUTH` | an agent tried to save on `main`. Agents save on slice branches; `accept` is how work reaches `main` |

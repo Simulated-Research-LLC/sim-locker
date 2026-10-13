@@ -504,13 +504,18 @@ test("status and refusals say what to do next, in the output and in --json alike
   j = JSON.parse(run(C, {}, "status", "--no-fetch", "--json").stdout); assert.ok(j.next.some((n) => n.code === "STALE" && n.fix === "sl pull"));
   // refusals: one sentence, then the next command, the same in --json
   sh(C, "checkout", "--quiet", "main"); await writeFile(join(C, "x.js"), "2\n");
-  p = run(C, { SL_ACTOR: "rick" }, "save", "-m", "y"); assert.equal(p.status, 1); assert.match(p.stderr, /^STALE: main here is 1 save\(s\) behind the remote\n  next: sl pull\n$/);
-  j = JSON.parse(run(C, { SL_ACTOR: "rick" }, "save", "-m", "y", "--json").stdout); assert.equal(j.code, "STALE"); assert.equal(j.next, "sl pull"); assert.equal(j.details.next, "sl pull");
+  p = run(C, { SL_ACTOR: "rick" }, "save", "-m", "y"); assert.equal(p.status, 1); assert.match(p.stderr, /^STALE: main here is 1 save\(s\) behind the remote, and it has changes not yet saved\n  next: sl save -m "<what and why>" --slice <name> \(a new slice starts from the remote's main\), then sl pull\n$/);
+  j = JSON.parse(run(C, { SL_ACTOR: "rick" }, "save", "-m", "y", "--json").stdout); assert.equal(j.code, "STALE"); assert.match(j.next, /^sl save .* then sl pull$/); assert.equal(j.details.next, j.next);
   p = run(C, {}, "save", "-m", "y"); assert.match(p.stderr, /^NO_ACTOR: .*\n  next: export SL_ACTOR=<name>\n$/);
   // the way out of a stale truth branch with unsaved work: a new slice, started from the remote's main, and the step line says pull first
-  assert.match(run(C, { SL_ACTOR: "rick" }, "status", "--no-fetch").stdout, /next       main is behind: sl pull first\n/);
+  assert.match(run(C, { SL_ACTOR: "rick" }, "status", "--no-fetch").stdout, /next       main is behind and 1 file\(s\) not saved: sl save -m "<what and why>" --slice <name> \(a new slice starts from origin\/main\), then sl pull\n/);
   j = JSON.parse(run(C, { SL_ACTOR: "claude" }, "save", "-m", "y", "--slice", "slice/out", "--json").stdout); assert.equal(j.saved, true); assert.equal(j.branch, "slice/out");
   assert.equal(sh(C, "rev-parse", "slice/out~1"), sh(C, "rev-parse", "origin/main"), "the slice starts from the remote's main, not the stale local one");
+  // the unsaved change touches a file the remote also changed: the slice starts from the local main instead, and the save says so
+  sh(C, "checkout", "--quiet", "main"); await writeFile(join(C, "n.md"), "mine\n");
+  j = JSON.parse(run(C, { SL_ACTOR: "claude" }, "save", "-m", "n", "--slice", "slice/conf", "--json").stdout); assert.equal(j.saved, true); assert.match(j.note, /starts from the local main/);
+  assert.equal(sh(C, "rev-parse", "slice/conf~1"), sh(C, "rev-parse", "main")); assert.equal(sh(C, "show", "slice/conf:n.md"), "mine");
+  sh(C, "checkout", "--quiet", "main"); assert.match(run(C, { SL_ACTOR: "rick" }, "status", "--no-fetch").stdout, /next       main is behind: sl pull first\n/);
   sh(C, "checkout", "--quiet", "--detach"); assert.match(run(C, {}, "status", "--no-fetch").stdout, /next       not on a branch: sl save .* --slice <name>/); sh(C, "checkout", "--quiet", "slice/x");
   await rejects(L.lease(repo, claude, "acquire"), "LEASE_HELD").then((e) => { assert.match(e.message, /for another (29|30) min/); assert.match(e.next, /sl lease release/); });
   // help: grouped by the four words, and one command's options with an example
