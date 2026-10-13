@@ -368,7 +368,7 @@ export async function status(repo, { fetch = true } = {}) {
   const branch = await currentBranch(repo.top);
   const reviewCmd = `sl review ${truthName}..${branch === "HEAD" ? "<slice>" : branch} --verdict pass|fix|block -f "<findings>"`;
   for (const s of await staleReviews(repo)) problem("STALE REVIEW", `STALE REVIEW ${s.id}: ${s.moved.length} cited file(s) changed since: ${s.moved.slice(0, 5).join(", ")}${s.moved.length > 5 ? ", ..." : ""}`, `locker/reviews/${s.id}.json no longer matches the files; a different actor reviews again: ${reviewCmd}`);
-  if (await mergeInProgress(repo)) { const files = await conflictFiles(repo); problem("UPDATE WAITING", `UPDATE WAITING: an update left ${files.length} file(s) with lines to settle: ${files.slice(0, 5).join(", ")}`, settleNext(files)); }
+  if (await mergeInProgress(repo)) { const files = await conflictFiles(repo); problem("UPDATE WAITING", files.length ? `UPDATE WAITING: an update left ${files.length} file(s) with lines to settle: ${files.slice(0, 5).join(", ")}` : "UPDATE WAITING: an update is settled but not yet saved", settleNext(files)); }
   if (branch === "HEAD") problem("DETACHED", "DETACHED: not on any branch; check out a slice or the truth branch", `sl save -m "<what and why>" --slice <name> puts the folder on a slice branch`);
   const dirty = await changedFiles(repo.top);
   const slice = await sliceState(repo, branch);
@@ -419,6 +419,12 @@ export async function save(repo, actor, { message, paths = [], slice } = {}) {
   if (branch === repo.config.truth && actor.kind !== "human") throw new LockerError("AGENT_ON_TRUTH", `an agent does not save on ${repo.config.truth}; it saves on a slice branch and the slice is accepted after a review`, { next: `sl save -m "<what and why>" --slice <name>` });
   if (branch === repo.config.truth && !f.fresh) throw new LockerError("NOT_FETCHED", `cannot reach the remote, so it is unknown whether ${repo.config.truth} is behind; saving on the truth branch waits`, { next: "check the connection, then sl status" });
   await git(repo.top, ["add", "-A", "--", ...(paths.length ? paths : ["."])]);
+  if (await mergeInProgress(repo)) {   // finishing an update: every marked line must be settled, or the markers would be saved as content
+    const touched = ((await git(repo.top, ["diff", "--name-only", "HEAD", "MERGE_HEAD"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
+    const left = touched.length ? ((await git(repo.top, ["grep", "-l", "--cached", "-e", "^<<<<<<< ", "-e", "^=======$", "-e", "^>>>>>>> ", "--", ...touched], { allowFail: true })) ?? "").split("\n").filter(Boolean) : [];
+    const still = await conflictFiles(repo);
+    if (left.length || still.length) throw new LockerError("MARKERS_LEFT", `${[...new Set([...still, ...left])].join(", ")} still ${still.length ? "has lines to settle" : "holds git's marks"}; the update is not finished`, { files: [...new Set([...still, ...left])], next: settleNext([...new Set([...still, ...left])]) });
+  }
   if (await isClean(repo.top)) return { saved: false, reason: "nothing to save", branch, head: await revParse(repo.top, "HEAD") };
   const body = `${message}\n\n${trailers({ Actor: `${actor.name} (${actor.kind})`, Session: actor.session })}\n`;
   await git(repo.top, [...ident(actor), "commit", "--quiet", "-F", "-"], { input: body });
@@ -464,7 +470,7 @@ export async function update(repo, actor, { message } = {}) {
   const branch = await currentBranch(repo.top);
   if (branch === "HEAD") throw new LockerError("DETACHED", "this folder is not on a branch", { next: `sl save -m "<what and why>" --slice <name>` });
   if (branch === truth) throw new LockerError("BAD_SLICE", `${truth} is the truth branch; update brings ${truth} into a slice`, { next: "sl pull" });
-  if (await mergeInProgress(repo)) { const files = await conflictFiles(repo); throw new LockerError("UPDATE_CONFLICT", `an update is already waiting on ${files.join(", ") || "marked files"}`, { files, next: settleNext(files) }); }
+  if (await mergeInProgress(repo)) { const files = await conflictFiles(repo); throw new LockerError("UPDATE_CONFLICT", files.length ? `an update is already waiting on ${files.join(", ")}` : "an update is settled but not yet saved", { files, next: settleNext(files) }); }
   if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "there are changes not yet saved; save them first", { next: `sl save -m "<what and why>"` });
   const f = await freshen(repo, { force: true });
   if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${remote}`, { next: "check the connection, then sl update" });
@@ -472,16 +478,16 @@ export async function update(repo, actor, { message } = {}) {
   if (!target) throw new LockerError("NOT_BACKED_UP", `${remote}/${truth} does not exist; nothing to bring in`);
   if ((await git(repo.top, ["merge-base", "--is-ancestor", target, "HEAD"], { allowFail: true })) !== null) return { updated: false, reason: `${branch} already has everything on ${remote}/${truth}`, branch, head: await revParse(repo.top, "HEAD") };
   const body = `${message ?? `bring ${truth} into ${branch}`}\n\n${trailers({ Actor: `${actor.name} (${actor.kind})`, Session: actor.session })}\n`;
-  const merged = await git(repo.top, [...ident(actor), "merge", "--no-ff", "--quiet", "-m", body, target], { allowFail: true });
-  if (merged === null) {
+  try { await git(repo.top, [...ident(actor), "merge", "--no-ff", "--quiet", "-m", body, `${remote}/${truth}`]); } catch (e) {
     const files = await conflictFiles(repo);
-    throw new LockerError("UPDATE_CONFLICT", `${branch} and ${truth} changed the same lines in ${files.join(", ") || "some files"}; those lines are in the files now with git's marks`, { files, next: settleNext(files) });
+    if (!files.length) { await git(repo.top, ["merge", "--abort"], { allowFail: true }); throw new LockerError("GIT", `bringing ${truth} into ${branch} failed: ${(e.stderr ?? String(e)).trim()}`, { next: "sl status" }); }
+    throw new LockerError("UPDATE_CONFLICT", `${branch} and ${truth} changed the same lines in ${files.join(", ")}; those lines are in the files now with git's marks`, { files, next: settleNext(files) });
   }
   return { updated: true, branch, head: await revParse(repo.top, "HEAD"), from: target, actor: actor.name };
 }
 const mergeInProgress = async (repo) => (await stat(join(repo.gitDir, "MERGE_HEAD")).catch(() => null)) !== null;
 const conflictFiles = async (repo) => ((await git(repo.top, ["diff", "--name-only", "--diff-filter=U"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
-const settleNext = (files) => `open ${files.length ? files.join(", ") : "the marked files"}, keep the lines you want between the <<<<<<< and >>>>>>> marks and delete the marks, then sl save -m "<what and why>"`;
+const settleNext = (files) => files.length ? `open ${files.join(", ")}, keep the lines you want between the <<<<<<< and >>>>>>> marks and delete the marks (in a record file the two sides are keys named "<<<<<<< ours" and ">>>>>>> theirs"), then sl save -m "<what and why>"` : `the marked lines are settled; sl save -m "<what and why>" finishes the update`;
 
 /** The review record for a slice, read from the slice head itself, never from the working tree. */
 async function committedReview(repo, head, reviewId) {
@@ -547,14 +553,17 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
     const gate = await runGate(repo, head, actor);
     if (gate.code !== 0) throw new LockerError("GATE_FAILED", `the project's own gate refused (${repo.config.accept.gate.join(" ")} on ${head.slice(0, 7)}, exit ${gate.code}):\n${gate.output.trim().split("\n").slice(-12).join("\n")}`, { output: gate.output });
   }
-  const was = await currentBranch(repo.top);
+  const was = await currentBranch(repo.top); let done = false;
   await git(repo.top, ["checkout", "--quiet", truth]);
   try {
-    if ((await git(repo.top, [...ident(actor), "merge", "--squash", "--quiet", head], { allowFail: true })) === null) {
-      // the slice and the truth branch changed the same lines; nothing half-done is left on the truth branch
+    try { await git(repo.top, [...ident(actor), "merge", "--squash", "--quiet", head]); } catch (e) {
+      // nothing half-done is left on the truth branch, and the folder goes back to the slice so the next step can be run from there
       const files = await conflictFiles(repo);
       await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]);
-      throw new LockerError("ACCEPT_CONFLICT", `${slice} and ${truth} changed the same lines in ${files.join(", ") || "some files"}; the slice has to take ${truth}'s version of those lines first`, { files, next: `on ${slice}: sl update (brings ${truth} into the slice; a line both changed is left for you to settle), then sl backup, a new review, then sl accept` });
+      await git(repo.top, ["clean", "-fdq"], { allowFail: true });   // the tree was clean before the squash, so anything untracked now is the squash's debris
+      await git(repo.top, ["checkout", "--quiet", slice]); done = true;
+      if (!files.length) throw new LockerError("GIT", `the squash of ${slice} onto ${truth} failed: ${(e.stderr ?? String(e)).trim()}`, { next: "sl status" });
+      throw new LockerError("ACCEPT_CONFLICT", `${slice} and ${truth} changed the same lines in ${files.join(", ")}; the slice has to take ${truth}'s version of those lines first`, { files, next: `on ${slice}: sl update (brings ${truth} into the slice; a line both changed is left for you to settle), then sl backup, a new review, then sl accept` });
     }
     const body = `${message ?? `accept ${slice}`}\n\n${trailers({ Slice: slice, "Range-Head": head, "Range-Base": base, Review: reviewId, Actor: `${actor.name} (${actor.kind})`, Session: actor.session })}\n`;
     await git(repo.top, [...ident(actor), "commit", "--quiet", "-F", "-"], { input: body });
@@ -572,7 +581,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
     const kept = await git(repo.top, ["push", "--quiet", remote, `done/${slice}:refs/heads/done/${slice}`], { allowFail: true });
     return { accepted: true, merge, slice, keptAs: `done/${slice}`, keptOnRemote: kept !== null, commits: commits.length, review: reviewId, ...(bootstrap ? { bootstrap: `${CONFIG} was not on ${remote}/${truth}; this slice's copy ruled this acceptance and is now on the truth branch` } : {}) };
   } finally {
-    if (was !== slice && was !== truth) await git(repo.top, ["checkout", "--quiet", was], { allowFail: true });
+    if (!done && was !== slice && was !== truth) await git(repo.top, ["checkout", "--quiet", was], { allowFail: true });
   }
 }
 
