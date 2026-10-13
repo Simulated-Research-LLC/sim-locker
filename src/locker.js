@@ -9,6 +9,7 @@ import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { git, revParse, currentBranch, isClean, changedFiles, blobAt, topLevel, range, aheadBehind } from "./git.js";
 
@@ -47,6 +48,11 @@ export async function openRepo(cwd = process.cwd()) {
   config.lease = { ttlMinutes: 30, ...(config.lease ?? {}) };
   config.live = config.live ?? { kind: "none" };
   config.confirm = config.confirm ?? ["accept", "revert"];
+  // accept.gate: a command run in the repo before accepting (a project's own checks); accept.trailing: record files, not code, that may
+  // change after the reviewed head (a delivery ledger, say). Review records themselves may only be added, never changed.
+  config.accept = { gate: null, trailing: [], ...(config.accept ?? {}) };
+  if (config.accept.gate !== null && !(Array.isArray(config.accept.gate) && config.accept.gate.every((x) => typeof x === "string") && config.accept.gate.length)) throw new LockerError("CONFIG", "accept.gate must be a list of strings (the command and its arguments)");
+  if (!Array.isArray(config.accept.trailing) || !config.accept.trailing.every((x) => typeof x === "string")) throw new LockerError("CONFIG", "accept.trailing must be a list of path patterns");
   const repo = { top, config, configFrom, remoteUrl, gitDir: await gitDir(top) };
   await registerClone(repo);                                           // every clone that runs the tool is known to the registry
   return repo;
@@ -64,6 +70,23 @@ export async function actorFromEnv(repo, env = process.env) {
     try { session = (await readFile(file, "utf8")).trim(); } catch { session = randomBytes(6).toString("hex"); await writeFile(file, session + "\n"); }
   }
   return { name, kind, session };
+}
+
+/** A simple glob: * matches within a path segment, ** across segments. */
+function globToRegExp(pattern) {
+  const esc = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*");
+  return new RegExp(`^${esc}$`);
+}
+
+/** Run a project's own gate command in the repo, with the actor in its environment. Never a shell. */
+function runGate(repo, cmd, args, actor) {
+  return new Promise((done) => {
+    const c = spawn(cmd, args, { cwd: repo.top, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, SL_ACTOR: actor.name, SL_SESSION: actor.session } });
+    let output = "";
+    c.stdout.on("data", (d) => { output += d; }); c.stderr.on("data", (d) => { output += d; });
+    c.on("error", (e) => done({ code: 127, output: String(e) }));
+    c.on("close", (code) => done({ code, output }));
+  });
 }
 
 const ident = (actor) => ["-c", `user.name=${actor.name}`, "-c", `user.email=${actor.name}@simlocker.local`];
@@ -389,11 +412,17 @@ export async function accept(repo, actor, { slice, reviewId, message, confirm })
     const ancestor = await git(repo.top, ["merge-base", "--is-ancestor", r.range.to, head], { allowFail: true });
     if (ancestor === null) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers ${String(r.range.to).slice(0, 7)}, which is not in the history of ${slice}`);
     const since = (await git(repo.top, ["diff", "--name-status", "--no-renames", `${r.range.to}..${head}`])).split("\n").filter(Boolean);
-    const outside = since.filter((l) => !/^A\tlocker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(l));
+    const trailing = repo.config.accept.trailing.map(globToRegExp);
+    const outside = since.filter((l) => { const [st, file] = l.split("\t"); return !((st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(file)) || trailing.some((re) => re.test(file))); });
     if (outside.length) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers up to ${String(r.range.to).slice(0, 7)} but ${slice} is now at ${head.slice(0, 7)} and changed ${outside.slice(0, 5).map((l) => l.replace("\t", " ")).join(", ")}; review the new commits`);
   }
   for (const [file, blob] of Object.entries(r.cited ?? {})) if ((await blobAt(repo.top, head, file)) !== blob) throw new LockerError("REVIEW_STALE", `review ${reviewId} cites ${file} at ${String(blob).slice(0, 7)} but the slice has a different version`);
   if (r.verdict !== "pass") throw new LockerError("REVIEW_BLOCKS", `review ${reviewId} says ${r.verdict}: ${String(r.findings).slice(0, 200)}`);
+  if (repo.config.accept.gate) {
+    const [cmd, ...args] = repo.config.accept.gate;
+    const gate = await runGate(repo, cmd, args, actor);
+    if (gate.code !== 0) throw new LockerError("GATE_FAILED", `the project's own gate refused (${repo.config.accept.gate.join(" ")}, exit ${gate.code}):\n${gate.output.trim().split("\n").slice(-12).join("\n")}`, { output: gate.output });
+  }
   const commits = await range(repo.top, base, head);
   const pending = await requireConfirm(repo, actor, "accept", { slice, head, reviewId }, confirm);
   if (pending) return { ...pending, slice, head, commits: commits.length, review: reviewId };

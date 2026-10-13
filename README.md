@@ -75,11 +75,25 @@ The lease lives on the branch `locker/lease`, not a custom ref, because some pro
 | `LEASE_HELD` | someone else holds the lease on `main`. It expires on its own if their session dies |
 | `NO_REVIEW`, `REVIEW_STALE`, `REVIEW_RANGE`, `REVIEW_BLOCKS`, `REVIEW_SELF`, `REVIEW_ACTOR` | accept needs a review record committed in the slice, by a different configured actor, whose range is exactly the slice (merge base to head) and whose cited files are unchanged; the only commits allowed after the reviewed head are added review records |
 | `NAME_TAKEN` | `done/<slice>` already exists; a slice name is used once |
+| `GATE_FAILED` | the project's own gate command (`accept.gate` in `locker.json`) exited non-zero |
 | `DETACHED` | not on a branch |
 | `STALE REVIEW` (status) | a review cites a file whose content has since changed |
 | `BAD_CONFIRM` | wrong or expired token. Tokens last 10 minutes and are tied to the exact operation |
 | `PUSH_REFUSED`, `NOT_BACKED_UP` | the remote refused, or after the push the remote did not have the commit. Sim Locker never forces a push |
 | `DIVERGED` | `main` here has commits the remote does not. A person looks at this |
+
+## A project's own gates
+
+Projects with their own checks keep them. Two settings in `locker.json`:
+
+```json
+"accept": {
+  "gate": ["node", "tools/old-winds.js", "accept", "--check"],
+  "trailing": ["vault/00 Start/Delivery ledger.md"]
+}
+```
+
+`gate` is a command (no shell) run in the repo before `accept` goes ahead, with `SL_ACTOR` and `SL_SESSION` in its environment; a non-zero exit refuses with `GATE_FAILED` and the command's last lines. `trailing` lists record files that may change after the reviewed head without making the review stale (a delivery ledger written at acceptance time); review records themselves may only be added. Nothing else may change after the review.
 
 ## For agents: the MCP server
 
@@ -101,7 +115,7 @@ Claude Code config, for example:
 
 ## What is tested
 
-`npm test` runs 15 tests against real git: a bare remote standing in for GitHub and two clones standing in for two machines. Asserted: UNMANAGED for a plain folder and an unmanaged clone; NO_ACTOR; one session per clone; a human saving and backing up on `main` with the trailers present; AGENT_ON_TRUTH for save and revert; saved, backed up and accepted detection in `status`; TWO CLONES when a second clone opens, cleared when it is gone; STALE after another clone moves `main`, `save` refused, cleared by `pull`; the lease held, not releasable or renewable by others, taken when expired; accept refused for NO_LEASE, NO_REVIEW, REVIEW_STALE (new commit; a file renamed into `locker/reviews/`), REVIEW_BLOCKS, REVIEW_SELF, DIRTY, BAD_SLICE (`HEAD`, `refs/heads/main`, `main`), BAD_CONFIRM, NAME_TAKEN; the working-tree `locker.json` not changing an actor's kind; the first accept step moving nothing and the second moving `main` on the remote with the trailers, keeping `done/<slice>` locally and on the remote; stale reviews cleared by the accept; NOT_BACKED_UP when the remote cannot be asked; the two-step revert; a plain `git clone` holding `locker.json` and the review records; the merge driver through `.gitattributes`, both a hand-installed one and the one `init` installs with PATH stripped; `status --no-fetch` saying NOT FETCHED; the guard passing tool and human commits and failing a raw commit and a forced push.
+`npm test` runs 16 tests against real git: a bare remote standing in for GitHub and two clones standing in for two machines. Asserted: UNMANAGED for a plain folder and an unmanaged clone; NO_ACTOR; one session per clone; a human saving and backing up on `main` with the trailers present; AGENT_ON_TRUTH for save and revert; saved, backed up and accepted detection in `status`; TWO CLONES when a second clone opens, cleared when it is gone; STALE after another clone moves `main`, `save` refused, cleared by `pull`; the lease held, not releasable or renewable by others, taken when expired; accept refused for NO_LEASE, NO_REVIEW, REVIEW_STALE (new commit; a file renamed into `locker/reviews/`), REVIEW_BLOCKS, REVIEW_SELF, DIRTY, BAD_SLICE (`HEAD`, `refs/heads/main`, `main`), BAD_CONFIRM, NAME_TAKEN; the working-tree `locker.json` not changing an actor's kind; the first accept step moving nothing and the second moving `main` on the remote with the trailers, keeping `done/<slice>` locally and on the remote; stale reviews cleared by the accept; NOT_BACKED_UP when the remote cannot be asked; the two-step revert; a plain `git clone` holding `locker.json` and the review records; the merge driver through `.gitattributes`, both a hand-installed one and the one `init` installs with PATH stripped; `status --no-fetch` saying NOT FETCHED; the guard passing tool and human commits and failing a raw commit and a forced push; `accept.gate` refusing with the gate's own words and `accept.trailing` letting a ledger row through while a raw commit after the review is still refused.
 
 Not in the suite: two actors racing for the lease in the same instant (the reviewer reports it held under six racing clones, `docs/review-0.1.md`; that run is the reviewer's, not reproduced here), REVIEW_RANGE, PUSH_REFUSED, DIVERGED, LEASE_RACE, LEASE_NOT_MINE.
 
@@ -125,4 +139,4 @@ docs/reading-rea-and-ghidra.md   what was read before the design, with file:line
 ASTRA_BRIEF.md       the brief for the adversarial review by Codex (Astra) and the adoption steps
 ```
 
-About 790 lines of JavaScript, two dependencies (the MCP SDK and zod).
+About 820 lines of JavaScript, two dependencies (the MCP SDK and zod).
