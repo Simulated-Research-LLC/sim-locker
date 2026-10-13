@@ -1,0 +1,26 @@
+{
+ "id": "rev_1dee58604c3d",
+ "kind": "review",
+ "range": {
+  "from": "b1ad6d10ab9591a5661987ecf55d95ed66916329",
+  "to": "e5759259d3f96904b17a28b93412deb978847e30"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Second pass after the fixes, with real commands in a scratch remote and clones. ACCEPT_CONFLICT: main is back at origin/main, the index and tree are clean, no SQUASH_MSG, MERGE_MSG or AUTO_MERGE is left, the confirm token is consumed, the lease is still held, and the folder is back on the slice so the next step runs where it says. An ignored file (.git/info/exclude) survives the failure path; git clean -fd cannot touch a tracked or untracked file a person had, since accept refused DIRTY first and status --porcelain counts untracked files; it does remove an empty untracked directory, which carries nothing. A squash that fails with a missing object is refused as GIT with git's own words and next sl status, in accept and in update (merge --abort leaves no MERGE_HEAD). sl update leaves the marks reading HEAD and origin/main; sl save with the marks still in the file, unmerged or staged, is refused MARKERS_LEFT and nothing is saved; the settled save is one commit with two parents and the actor's trailers; status in the settled-but-unsaved state says so. Record files merge per key through the driver in both update and the squash, and a key both sides changed stops with the two sides kept. README walkthrough now puts update before the review and names the new review; codes table has ACCEPT_CONFLICT, UPDATE_CONFLICT and MARKERS_LEFT. npm test 22 pass, 1035 lines, no em dash in the diff, 0.2.4 in package.json, package-lock.json and mcp.js, rule 5 grep unchanged. Left for the backlog, none needing a code change now: status does not scan for marks so it says settled while save still refuses; the has-lines-to-settle branch in save is dead because add -A runs first, and a modify/delete or binary conflict has no textual mark to catch; save with paths or --slice during an update is a raw git error; the MCP tools have no tests.",
+ "cited": {
+  "AGENTS.md": "d254e131e61a8666761d30041ab95e2828a231c8",
+  "CLAUDE.md": "d254e131e61a8666761d30041ab95e2828a231c8",
+  "DESIGN.md": "fd48bf633efd48c860c4a506ae2bb519e81ca088",
+  "README.md": "a375dc60b5f3f10415cc85c0e9d3c9df3b11876c",
+  "bin/sl.js": "b5bec6cb616b2b38817bed16ea74efe774b304dc",
+  "package-lock.json": "47df7ab3423a38c02efc9f4dd66b6e0cf7812388",
+  "package.json": "e0dcdca72274952cedfe6d6085d7d41c6cd4d9f1",
+  "src/locker.js": "e95c4ae18cbc64b3ac820a5b15d9d6f5b9a20aef",
+  "src/mcp.js": "375990e70ab12dca4c49c6087b1c4c931ecc9cba",
+  "test/locker.test.js": "38c0e4450e0717edcf46d4de691fe7fab7b51f41"
+ },
+ "created": "2026-10-13T22:37:48.882Z"
+}
