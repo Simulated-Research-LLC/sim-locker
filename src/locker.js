@@ -433,16 +433,17 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   if (fresh.configFrom !== `${remote}/${truth}`) {
     // bootstrap: the project has never had locker.json on its truth branch, and this very slice brings it. The slice's own config rules
     // this one acceptance (it still needs the lease, a review by another actor and the confirm); afterwards the remote's copy rules.
-    checkSliceName(repo, slice);
     const sliceHead = await revParse(repo.top, `refs/heads/${slice}`);
     const onRemote = await git(repo.top, ["show", `${remote}/${truth}:${CONFIG}`], { allowFail: true });
     const onSlice = sliceHead ? await git(repo.top, ["show", `${sliceHead}:${CONFIG}`], { allowFail: true }) : null;
     if (onRemote !== null || onSlice === null) throw new LockerError("CONFIG", `${CONFIG} is not on ${remote}/${truth}; back the truth branch up before accepting`);
+    const ever = await git(repo.top, ["log", "-1", "--format=%H", `${remote}/${truth}`, "--", CONFIG], { allowFail: true });
+    if (ever) throw new LockerError("CONFIG", `${CONFIG} was on ${remote}/${truth} before (${ever.slice(0, 7)}) and is gone; a bootstrap is only for a project that never had one. A human puts it back on the truth branch`);
     let cfg; try { cfg = JSON.parse(onSlice); } catch { throw new LockerError("CONFIG", `${CONFIG} in ${slice} is not valid JSON`); }
     fresh = { config: checkConfig(cfg, `${slice} (bootstrap)`), configFrom: `${slice} (bootstrap)` }; bootstrap = true;
   }
   repo = { ...repo, config: fresh.config, configFrom: fresh.configFrom };
-  if (!(actor.name in repo.config.actors)) throw new LockerError("NO_ACTOR", `${actor.name} is not an actor in ${CONFIG} on ${remote}/${truth}`);
+  if (!(actor.name in repo.config.actors)) throw new LockerError("NO_ACTOR", `${actor.name} is not an actor in ${CONFIG} on ${repo.configFrom}`);
   const t = await truthState(repo);
   if (t.stale) throw new LockerError("STALE", `${truth} is behind the remote; pull first`);
   if (t.ahead > 0) throw new LockerError("DIVERGED", `${truth} has local commits the remote does not; this needs a person`);

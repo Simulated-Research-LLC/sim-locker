@@ -381,6 +381,17 @@ test("bootstrap: a project whose truth branch has no locker.json yet accepts the
   assert.equal(done.accepted, true); assert.match(done.bootstrap, /was not on origin\/main/);
   assert.ok(sh(C, "show", "origin/main:locker.json"));
   await L.lease(repo, claude, "release");
-  // from now on the remote's copy rules: a slice that changes locker.json does not get its own copy used
+  // from now on the remote's copy rules, and removing locker.json from the truth branch does not reopen the bootstrap
   const repo2 = await L.openRepo(C); assert.equal(repo2.configFrom, "origin/main");
+  const rick = await L.actorFromEnv(repo2, env("rick", "r9"));
+  sh(C, "checkout", "--quiet", "main"); sh(C, "rm", "-q", "locker.json"); await L.save(repo2, rick, { message: "drop the config" }); await L.backup(repo2);
+  await writeFile(join(C, "locker.json"), JSON.stringify({ project: "fresh", truth: "main", remote: "origin", actors: { claude: "agent", mallory: "agent" }, confirm: [] }, null, 2) + "\n");
+  const repo3 = await L.openRepo(C);                                        // working tree config: openRepo tolerates it, accept does not
+  await L.save(repo3, claude, { message: "my own rules", slice: "slice/takeover" });
+  const mallory = await L.actorFromEnv(repo3, env("mallory", "m9"));
+  const rvm = await L.review(repo3, mallory, { from: "main", to: "slice/takeover", verdict: "pass", findings: "sure" });
+  await L.save(repo3, claude, { message: "review" }); await L.backup(repo3); await L.lease(repo3, claude, "acquire");
+  const e = await rejects(L.accept(repo3, claude, { slice: "slice/takeover", reviewId: rvm.id }), "CONFIG");
+  assert.match(e.message, /was on origin\/main before/);
+  await L.lease(repo3, claude, "release");
 });
