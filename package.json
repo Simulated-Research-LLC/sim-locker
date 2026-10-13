@@ -1,0 +1,18 @@
+{
+  "name": "sim-locker",
+  "version": "0.1.0",
+  "description": "The truth store for a person and their AI agents: git underneath, four states on top (saved, backed up, accepted, live), a CLI and an MCP server.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": { "sl": "bin/sl.js", "sl-mcp": "bin/sl-mcp.js" },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lines": "cat src/*.js bin/*.js | wc -l"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "^3.25.0"
+  }
+}
