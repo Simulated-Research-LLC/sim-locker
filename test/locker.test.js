@@ -451,3 +451,67 @@ test("the restore drill fails on a failing test command and keeps the folders fo
   assert.equal(slow.details.test.code, 124); assert.match(slow.details.test.lastLines, /killed after 1 s/);
   assert.ok(Date.now() - t0 < 5000, "killed within the second, not after a minute");
 });
+
+test("status and refusals say what to do next, in the output and in --json alike; init says what it wrote; help knows each command", async () => {
+  // its own project, so the clone registry and the state of A and B do not matter here
+  const sl = fileURLToPath(new URL("../bin/sl.js", import.meta.url));
+  const run = (cwd, envExtra, ...a) => spawnSync(process.execPath, [sl, ...a], { cwd, encoding: "utf8", env: { ...process.env, SL_ACTOR: "", ...envExtra } });
+  const r2 = join(tmp, "qol.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", r2);
+  const C = join(tmp, "qol"); sh(tmp, "clone", "--quiet", r2, C); sh(C, "checkout", "--quiet", "-b", "main");
+  await writeFile(join(C, "README.md"), "# demo2\n"); sh(C, "add", "-A"); sh(C, "commit", "--quiet", "-m", "first"); sh(C, "push", "--quiet", "-u", "origin", "main");
+  // first run: a clone with no locker.json is told, in one line, how to make it managed
+  let p = run(C, {}, "status");
+  assert.equal(p.status, 1); assert.match(p.stderr, /^UNMANAGED: .*no locker\.json; run sl init here to make it managed\n  next: sl init\n$/);
+  p = run(C, {}, "status", "--json"); let j = JSON.parse(p.stdout);
+  assert.equal(j.code, "UNMANAGED"); assert.equal(j.error, "UNMANAGED"); assert.equal(j.next, "sl init"); assert.ok("message" in j && "details" in j);
+  // init says what it wrote and what to do next
+  const init = await L.init(C, { project: "demo2" });
+  assert.equal(init.wroteConfig, true); assert.ok(init.wrote.some((w) => w.startsWith("locker.json")) && init.wrote.some((w) => w.startsWith(".gitattributes")));
+  assert.match(init.next, /as rick, on main: sl save -m "manage with sim locker" locker\.json \.gitattributes, then sl backup/);
+  p = run(C, {}, "status"); assert.equal(p.status, 2);
+  assert.match(p.stdout, /PROBLEM  CONFIG FROM WORKING TREE.*\n   next  as rick, on main: sl save/);
+  // every problem has a fix in `next`, and the last entry is the step toward the next word
+  const repo = await L.openRepo(C);
+  let st = await L.status(repo);
+  assert.equal(st.next.length, st.problems.length + 1);
+  assert.equal(st.next[0].code, "CONFIG FROM WORKING TREE"); assert.match(st.next[0].fix, /sl save -m "manage with sim locker"/);
+  assert.match(st.next.at(-1).step, /not saved: sl save/);
+  const rick = await L.actorFromEnv(repo, env("rick", "r2"));
+  await L.save(repo, rick, { message: "manage with sim locker" }); await L.backup(repo);
+  st = await L.status(await L.openRepo(C)); assert.deepEqual(st.problems, []); assert.equal(st.next.length, 1); assert.match(st.next[0].step, /nothing waiting; main is backed up/);
+  p = run(C, {}, "status"); assert.equal(p.status, 0); assert.match(p.stdout, /\nnext       nothing waiting; main is backed up\n$/);
+  // on a slice: saved -> back up; backed up -> review; a passing review -> lease and accept
+  const claude = await L.actorFromEnv(repo, env("claude", "c2")), astra = await L.actorFromEnv(repo, env("astra", "a2"));
+  await writeFile(join(C, "x.js"), "1\n"); await L.save(repo, claude, { message: "x", slice: "slice/x" });
+  st = await L.status(repo); assert.equal(st.next.at(-1).step, "saved, not backed up: sl backup");
+  await L.backup(repo);
+  st = await L.status(repo); assert.match(st.next.at(-1).step, /^backed up, not reviewed: a different actor runs sl review main\.\.slice\/x --verdict/);
+  const rev = await L.review(repo, astra, { from: "main", to: "slice/x", verdict: "pass", findings: "fine" });
+  st = await L.status(repo); assert.match(st.next.at(-1).step, /^1 file\(s\) not saved: sl save/);
+  await L.save(repo, claude, { message: "review record" }); await L.backup(repo);
+  st = await L.status(repo); assert.equal(st.next.at(-1).step, `reviewed (${rev.id}, pass); to accept: sl lease acquire, then sl accept slice/x --review ${rev.id}`);
+  // the lease problem says when it expires; STALE says sl pull; the CLI prints the same next
+  await L.lease(repo, astra, "acquire");
+  st = await L.status(repo); const held = st.next.find((n) => n.code === "LEASE HELD"); assert.match(held.fix, /^it expires in (29|30) min; wait, or astra runs sl lease release$/);
+  const D2 = join(tmp, "qol-2"); sh(tmp, "clone", "--quiet", r2, D2);
+  await writeFile(join(D2, "n.md"), "n\n"); sh(D2, "add", "-A"); sh(D2, "commit", "--quiet", "-m", "moves main"); sh(D2, "push", "--quiet", "origin", "main"); await rm(D2, { recursive: true });
+  await L.freshen(repo, { force: true }); st = await L.status(repo);
+  assert.deepEqual(st.next.find((n) => n.code === "STALE"), { code: "STALE", fix: "sl pull" });
+  p = run(C, { SL_ACTOR: "rick" }, "status", "--no-fetch"); assert.equal(p.status, 2);
+  assert.match(p.stdout, /PROBLEM  NOT FETCHED.*\n   next  sl status \(without --no-fetch\)\n/); assert.match(p.stdout, /PROBLEM  STALE.*\n   next  sl pull\n/);
+  j = JSON.parse(run(C, {}, "status", "--no-fetch", "--json").stdout); assert.ok(j.next.some((n) => n.code === "STALE" && n.fix === "sl pull"));
+  // refusals: one sentence, then the next command, the same in --json
+  await writeFile(join(C, "x.js"), "2\n");
+  p = run(C, { SL_ACTOR: "claude" }, "save", "-m", "y"); assert.equal(p.status, 1); assert.match(p.stderr, /^STALE: main here is 1 commit\(s\) behind the remote\n  next: sl pull\n$/);
+  j = JSON.parse(run(C, { SL_ACTOR: "claude" }, "save", "-m", "y", "--json").stdout); assert.equal(j.code, "STALE"); assert.equal(j.next, "sl pull"); assert.equal(j.details.next, "sl pull");
+  p = run(C, {}, "save", "-m", "y"); assert.match(p.stderr, /^NO_ACTOR: .*\n  next: export SL_ACTOR=<name>\n$/);
+  await rejects(L.lease(repo, claude, "acquire"), "LEASE_HELD").then((e) => { assert.match(e.message, /for another (29|30) min/); assert.match(e.next, /sl lease release/); });
+  // help: grouped by the four words, and one command's options with an example
+  p = run(C, {}, "--help"); assert.equal(p.status, 0);
+  for (const g of ["\nsaved\n", "\nbacked up\n", "\naccepted\n", "\nlive\n", "\nthe drill\n"]) assert.ok(p.stdout.includes(g), g);
+  const one = run(C, {}, "help", "save").stdout; assert.match(one, /^sl save -m/); assert.match(one, /--slice <name>/); assert.match(one, /\nexample: sl save -m "boss hp x1.25" --slice slice\/boss-hp\n$/);
+  assert.equal(run(C, {}, "save", "--help").stdout, one);
+  p = run(C, {}, "help", "bogus"); assert.equal(p.status, 1); assert.match(p.stderr, /^USAGE: unknown command "bogus"\n  next: sl help\n$/);
+  p = run(C, {}, "bogus"); assert.equal(p.status, 1); assert.match(p.stderr, /^USAGE: unknown command "bogus"/);
+  sh(C, "checkout", "--quiet", "x.js");
+});
