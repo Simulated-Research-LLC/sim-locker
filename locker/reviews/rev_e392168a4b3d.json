@@ -1,0 +1,22 @@
+{
+ "id": "rev_e392168a4b3d",
+ "kind": "review",
+ "range": {
+  "from": "0a7ca4c08faafce7dcb2f1cec2e62d18b8969bf2",
+  "to": "177de41bcb1d6edffbb982ab60f2c14d17909231"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791908318",
+ "verdict": "fix",
+ "findings": "npm test passes 18 of 18; 875 lines; no em dashes in the changed files. Held: on a managed project a forged or deleted refs/remotes/origin/main does not get the slice's locker.json used, because accept's own fetch restores the tracking ref and the remote copy rules (reproduced: the remote's failing gate still refused); the bootstrap still needs the lease (NO_LEASE), a review by another actor (REVIEW_SELF, NO_REVIEW), runs the slice's own gate (GATE_FAILED), and after it the remote copy rules. Must change: (1) src/locker.js:438 checks only the tip of origin/main, but README.md:96 and the comment at src/locker.js:434 say a project that has NEVER had locker.json. Reproduced: a managed project with a failing gate and confirm, a human save removes locker.json from main, then a slice carrying confirm [] and gate null was accepted in one step with bootstrap set, while git log origin/main -- locker.json shows it was there. An accepted slice that deletes locker.json opens the same door for agents. Either refuse when git log -1 origin/main -- locker.json finds any commit, or change the README and the comment to say not on the truth branch now. (2) README.md:96 says the bootstrap is still with the confirm, but the confirm and the gate are whatever the slice's own locker.json says: a bootstrap slice with confirm [] was accepted in one step (reproduced). That is acceptable for a first acceptance, since the project had no rules before and the reviewer sees locker.json in the diff, but the README must say plainly that the slice's own confirm, gate and actors rule that acceptance, including actors the slice itself adds as reviewers. (3) package-lock.json:507 changed the version of the dependency node_modules/forwarded from 0.2.0 to 0.2.1 while its resolved tarball and integrity are still 0.2.0; a blanket replace, revert that line. Should change: the test at test/locker.test.js:384 says a later slice that changes locker.json does not get its own copy used but only asserts configFrom; add the forged and deleted origin/main cases and the removed then re-added case. Polish: src/locker.js:436 repeats checkSliceName from :428; src/locker.js:445 NO_ACTOR says on origin/main when the slice's copy ruled. Not caused by this diff: REVIEW_SELF compares names only, so one person or session can review as any listed actor; the bootstrap widens that because the slice may define the reviewer actor itself.",
+ "cited": {
+  "README.md": "30ed0252ac5d5030868679df9dcdac170bc63417",
+  "package-lock.json": "f4f3754d0e3fd67e5e8edd49e7a0410d4a28056d",
+  "package.json": "c39e97b7616b200c139f20aa02772351eade72d0",
+  "src/locker.js": "98555a7aa0301f357114c44c4eed8fe863b8aece",
+  "src/mcp.js": "4145b63672442e7cfb1340fd737594a3cef05e2f",
+  "test/locker.test.js": "8274f1f0283798a87a14e8e31f06c69f9b7d7c50"
+ },
+ "created": "2026-10-13T16:18:38.443Z"
+}

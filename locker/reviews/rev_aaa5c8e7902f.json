@@ -1,0 +1,23 @@
+{
+ "id": "rev_aaa5c8e7902f",
+ "kind": "review",
+ "range": {
+  "from": "0a7ca4c08faafce7dcb2f1cec2e62d18b8969bf2",
+  "to": "9102b5ef3aa826325389bd656609601eb6368f2f"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev2-1791908426",
+ "verdict": "pass",
+ "findings": "Second look at 9102b5e. npm test passes 18 of 18; 876 lines; no em dashes in the changes; package-lock.json:507 forwarded is back to 0.2.0; versions 0.2.1 in package.json, package-lock.json and src/mcp.js. Reran every attack with real bare remotes and a temp HOME. Removed then readded: a managed project whose locker.json a human save removed from main, then a takeover slice with confirm [] and gate null, is now refused with CONFIG, was on origin/main before (src/locker.js:440 to 441); the new test at test/locker.test.js:385 covers the same case. Still held: a forged or deleted origin/main tracking ref leaves the remote copy ruling and its failing gate refusing; a true first bootstrap still needs the lease (NO_LEASE), a review by a different actor (REVIEW_SELF, NO_REVIEW), a valid token when the slice keeps confirm (BAD_CONFIRM), and runs the slice's own gate (GATE_FAILED); NO_ACTOR now names the slice's copy. README.md:96 now says plainly that the slice's own actors, confirm list and gate rule that first acceptance, which I judge acceptable since the project had no rules before and locker.json is in the reviewed diff. Polish, nothing that must change: the code comment at src/locker.js:435 still says the bootstrap needs the confirm, which the README now correctly says is the slice's own choice. Not caused by this diff: REVIEW_SELF compares names only, and a bootstrap slice may define its own reviewer actor.",
+ "cited": {
+  "README.md": "9c28672b492c499aec2e190f3ad1cba61bf54d73",
+  "locker/reviews/rev_e392168a4b3d.json": "56d4ef68bbd4e965e328d51977ffde9588e60c0f",
+  "package-lock.json": "0fc9c5d711671a56c90e0cd2e004f72638dc1974",
+  "package.json": "c39e97b7616b200c139f20aa02772351eade72d0",
+  "src/locker.js": "c78bdc5b126143f5af9a6f4381fd33fdd8553384",
+  "src/mcp.js": "4145b63672442e7cfb1340fd737594a3cef05e2f",
+  "test/locker.test.js": "b48218b4796fe569de73471b72725d887dfc53b6"
+ },
+ "created": "2026-10-13T16:20:26.501Z"
+}

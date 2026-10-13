@@ -363,3 +363,35 @@ test("a gate that hangs is killed with everything it started, and protected file
   assert.match(g.message, /killed after 1 s/); assert.ok(Date.now() - t0 < 5000, `accept returned after ${Date.now() - t0} ms`);
   await L.lease(repo2, claude, "release");
 });
+
+test("bootstrap: a project whose truth branch has no locker.json yet accepts the slice that brings it, once", async () => {
+  const R2 = join(tmp, "remote2.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", R2);
+  const C = join(tmp, "C"); sh(tmp, "clone", "--quiet", R2, C); sh(C, "checkout", "--quiet", "-b", "main");
+  await writeFile(join(C, "README.md"), "# fresh\n"); sh(C, "add", "-A"); sh(C, "commit", "--quiet", "-m", "first"); sh(C, "push", "--quiet", "-u", "origin", "main");
+  await L.init(C, { project: "fresh" });                                   // writes locker.json in the working tree only
+  const repo = await L.openRepo(C); assert.equal(repo.configFrom, "working tree");
+  const claude = await L.actorFromEnv(repo, env("claude", "c9")), astra = await L.actorFromEnv(repo, env("astra", "a9"));
+  await writeFile(join(C, "thing.txt"), "t\n");
+  await L.save(repo, claude, { message: "manage with sim locker", slice: "slice/manage" });
+  const rv = await L.review(repo, astra, { from: "main", to: "slice/manage", verdict: "pass", findings: "ok" });
+  await L.save(repo, claude, { message: "review" }); await L.backup(repo); await L.lease(repo, claude, "acquire");
+  const first = await L.accept(repo, claude, { slice: "slice/manage", reviewId: rv.id });
+  assert.equal(first.bootstrap, true);
+  const done = await L.accept(repo, claude, { slice: "slice/manage", reviewId: rv.id, confirm: first.token });
+  assert.equal(done.accepted, true); assert.match(done.bootstrap, /was not on origin\/main/);
+  assert.ok(sh(C, "show", "origin/main:locker.json"));
+  await L.lease(repo, claude, "release");
+  // from now on the remote's copy rules, and removing locker.json from the truth branch does not reopen the bootstrap
+  const repo2 = await L.openRepo(C); assert.equal(repo2.configFrom, "origin/main");
+  const rick = await L.actorFromEnv(repo2, env("rick", "r9"));
+  sh(C, "checkout", "--quiet", "main"); sh(C, "rm", "-q", "locker.json"); await L.save(repo2, rick, { message: "drop the config" }); await L.backup(repo2);
+  await writeFile(join(C, "locker.json"), JSON.stringify({ project: "fresh", truth: "main", remote: "origin", actors: { claude: "agent", mallory: "agent" }, confirm: [] }, null, 2) + "\n");
+  const repo3 = await L.openRepo(C);                                        // working tree config: openRepo tolerates it, accept does not
+  await L.save(repo3, claude, { message: "my own rules", slice: "slice/takeover" });
+  const mallory = await L.actorFromEnv(repo3, env("mallory", "m9"));
+  const rvm = await L.review(repo3, mallory, { from: "main", to: "slice/takeover", verdict: "pass", findings: "sure" });
+  await L.save(repo3, claude, { message: "review" }); await L.backup(repo3); await L.lease(repo3, claude, "acquire");
+  const e = await rejects(L.accept(repo3, claude, { slice: "slice/takeover", reviewId: rvm.id }), "CONFIG");
+  assert.match(e.message, /was on origin\/main before/);
+  await L.lease(repo3, claude, "release");
+});
