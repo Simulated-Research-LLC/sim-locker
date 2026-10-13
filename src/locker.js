@@ -432,7 +432,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   let fresh = await loadConfig(repo.top, repo.config), bootstrap = false;
   if (fresh.configFrom !== `${remote}/${truth}`) {
     // bootstrap: the project has never had locker.json on its truth branch, and this very slice brings it. The slice's own config rules
-    // this one acceptance (it still needs the lease, a review by another actor and the confirm); afterwards the remote's copy rules.
+    // this one acceptance, with its own actors, confirm list and gate (the lease and a review by another actor still hold); afterwards the remote's copy rules.
     const sliceHead = await revParse(repo.top, `refs/heads/${slice}`);
     const onRemote = await git(repo.top, ["show", `${remote}/${truth}:${CONFIG}`], { allowFail: true });
     const onSlice = sliceHead ? await git(repo.top, ["show", `${sliceHead}:${CONFIG}`], { allowFail: true }) : null;

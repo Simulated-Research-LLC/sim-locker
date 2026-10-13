@@ -1,0 +1,19 @@
+{
+ "id": "rev_4f55b95d439e",
+ "kind": "review",
+ "range": {
+  "from": "00996d185ac62f2feb32074dd7d184cc371818e7",
+  "to": "c19ba36dc69482045efe27ff161260f476e6a7a0"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791914208",
+ "verdict": "pass",
+ "findings": "Second look after rev_1428a065b3f1. DESIGN.md:63 now matches the Old Winds review record on its main: tooling round 1 found the bootstrap (row 1, fixed in 0.2.1) and the ledger row left on a refusal (row 2, with row 3 from round 2); the claims round found records ahead of the facts (rows 4, 5, 12 to 15); the three refused attempts found the row in the working tree (17a), the index (17b) and saved into the branch (17c). One thing left out, not untrue: 17b also found that naming the review id in the handoff made the review stale. The rest as in the first record: Percept 8f184ec adds locker.json, Old Winds 63c1b8f carries the Locker trailers, its locker.json gate and trailing file are as stated, 7 Percept tests in the restored clone. src/locker.js is one comment line. npm test 18 of 18. No em dashes in the diff.",
+ "cited": {
+  "DESIGN.md": "2561ac4de6cd91d9c069510ef2d099ea7c0fc774",
+  "locker/reviews/rev_1428a065b3f1.json": "57884295a6940c1c0edf1ed44bb3811b41690c49",
+  "src/locker.js": "4c1c57b93e360298b1db7c2c6cdcb646cf1f3655"
+ },
+ "created": "2026-10-13T17:56:48.140Z"
+}
