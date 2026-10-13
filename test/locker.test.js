@@ -527,3 +527,69 @@ test("status and refusals say what to do next, in the output and in --json alike
   p = run(C, {}, "bogus"); assert.equal(p.status, 1); assert.match(p.stderr, /^USAGE: unknown command "bogus"/);
   sh(C, "checkout", "--quiet", "x.js");
 });
+
+test("a slice that changed the same lines as the truth branch is refused at accept with nothing half-done, and sl update brings the truth branch in", async () => {
+  // its own remote: clone E is the acceptor, clone F moves main underneath it
+  const r4 = join(tmp, "conflict.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", r4);
+  const E = join(tmp, "E"); sh(tmp, "clone", "--quiet", r4, E); sh(E, "checkout", "--quiet", "-b", "main");
+  await writeFile(join(E, "notes.md"), "line one\n"); sh(E, "add", "-A"); sh(E, "commit", "--quiet", "-m", "first"); sh(E, "push", "--quiet", "-u", "origin", "main");
+  await L.init(E, { project: "conflict" }); const repo = await L.openRepo(E);
+  const rick = await L.actorFromEnv(repo, env("rick", "r5")), claude = await L.actorFromEnv(repo, env("claude", "c5")), astra = await L.actorFromEnv(repo, env("astra", "a5"));
+  await L.save(repo, rick, { message: "manage" }); await L.backup(repo);
+  await writeFile(join(E, "notes.md"), "line one, the slice's way\n"); await L.save(repo, claude, { message: "slice", slice: "slice/c" }); await L.backup(repo);
+  const F = join(tmp, "F"); sh(tmp, "clone", "--quiet", r4, F);
+  await writeFile(join(F, "notes.md"), "line one, main's way\n"); sh(F, "commit", "--quiet", "-am", "main moves"); sh(F, "push", "--quiet", "origin", "main");
+  await L.pull(repo);                                                        // on the slice: local main catches up
+  const rv = await L.review(repo, astra, { from: "main", to: "slice/c", verdict: "pass", findings: "ok" });
+  await L.save(repo, claude, { message: "record" }); await L.backup(repo); await L.lease(repo, claude, "acquire");
+  const first = await L.accept(repo, claude, { slice: "slice/c", reviewId: rv.id });
+  const e = await rejects(L.accept(repo, claude, { slice: "slice/c", reviewId: rv.id, confirm: first.token }), "ACCEPT_CONFLICT");
+  assert.deepEqual(e.details.files, ["notes.md"]); assert.match(e.next, /^on slice\/c: sl update/);
+  assert.equal(sh(E, "rev-parse", "main"), sh(E, "rev-parse", "origin/main"), "main is where the remote has it");
+  assert.equal(sh(E, "status", "--porcelain"), "", "nothing half-done is left behind");
+  assert.equal(sh(E, "rev-parse", "--abbrev-ref", "HEAD"), "slice/c", "the folder is back on the slice, where the next step runs");
+  assert.ok((await L.lease(repo, claude, "status")).lease.owner === "claude", "the lease is still held; the caller releases it");
+  await L.lease(repo, claude, "release");
+  // sl update on the slice: refusals first, then the shared line is left with git's marks, status says so, settling and saving finishes it
+  await writeFile(join(E, "scratch.txt"), "x\n"); await rejects(L.update(repo, claude, {}), "DIRTY"); await rm(join(E, "scratch.txt"));
+  sh(E, "checkout", "--quiet", "--detach"); await rejects(L.update(repo, claude, {}), "DETACHED"); sh(E, "checkout", "--quiet", "slice/c");
+  await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT").then((x) => { assert.deepEqual(x.details.files, ["notes.md"]); assert.match(x.next, /keep the lines you want/); });
+  let st = await L.status(repo); assert.ok(st.problems.some((p) => p.startsWith("UPDATE WAITING: an update left 1 file")), st.problems.join("|"));
+  await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT");
+  assert.match(await readFile(join(E, "notes.md"), "utf8"), /<<<<<<< HEAD[\s\S]*>>>>>>> origin\/main/, "the marks name the sides by name");
+  // saving with the marks still in the file is refused; so is saving with the file still unmerged
+  await rejects(L.save(repo, claude, { message: "oops" }), "MARKERS_LEFT").then((x) => assert.deepEqual(x.details.files, ["notes.md"]));
+  assert.equal(sh(E, "rev-list", "--count", "--merges", "slice/c"), "0", "nothing was saved");
+  await writeFile(join(E, "notes.md"), "<<<<<<< HEAD\nstill marked\n");
+  sh(E, "add", "notes.md"); await rejects(L.save(repo, claude, { message: "oops" }), "MARKERS_LEFT");
+  st = await L.status(repo); assert.ok(st.problems.some((p) => p === "UPDATE WAITING: an update is settled but not yet saved"), st.problems.join("|"));
+  await writeFile(join(E, "notes.md"), "line one, both ways\n");
+  const saved = await L.save(repo, claude, { message: "settled" }); assert.equal(saved.saved, true);
+  assert.equal(sh(E, "rev-list", "--count", "--merges", "slice/c"), "1", "the settled update is one save with two parents");
+  st = await L.status(repo); assert.ok(!st.problems.some((p) => p.startsWith("UPDATE WAITING")));
+  assert.equal((await L.update(repo, claude, {})).updated, false, "nothing more to bring in");
+  // now the slice can be accepted after a fresh review
+  await L.backup(repo);
+  const rv2 = await L.review(repo, astra, { from: "main", to: "slice/c", verdict: "pass", findings: "settled" });
+  await L.save(repo, claude, { message: "record" }); await L.backup(repo); await L.lease(repo, claude, "acquire");
+  const t2 = await L.accept(repo, claude, { slice: "slice/c", reviewId: rv2.id });
+  const done = await L.accept(repo, claude, { slice: "slice/c", reviewId: rv2.id, confirm: t2.token });
+  assert.equal(done.accepted, true); assert.equal(sh(E, "show", "origin/main:notes.md"), "line one, both ways");
+  await L.lease(repo, claude, "release");
+  // update refuses on the truth branch and a clean update on a slice is one save
+  await rejects(L.update(repo, rick, {}), "BAD_SLICE");
+  // a squash that fails for a reason other than a conflict is not called a conflict: git's own words, and the folder back on the slice
+  await writeFile(join(E, "lost.md"), "gone soon\n"); await L.save(repo, claude, { message: "lost", slice: "slice/lost" }); await L.backup(repo);
+  const rv3 = await L.review(repo, astra, { from: "main", to: "slice/lost", verdict: "pass", findings: "ok" });
+  await L.save(repo, claude, { message: "record" }); await L.backup(repo); await L.lease(repo, claude, "acquire");
+  const blob = sh(E, "rev-parse", "slice/lost~1:lost.md"); await rm(join(E, ".git", "objects", blob.slice(0, 2), blob.slice(2)));
+  const t3 = await L.accept(repo, claude, { slice: "slice/lost", reviewId: rv3.id });
+  const g = await rejects(L.accept(repo, claude, { slice: "slice/lost", reviewId: rv3.id, confirm: t3.token }), "GIT");
+  assert.match(g.message, /squash of slice\/lost onto main failed: .*unable to read/); assert.equal(g.next, "sl status");
+  assert.equal(sh(E, "rev-parse", "--abbrev-ref", "HEAD"), "slice/lost"); assert.equal(sh(E, "rev-parse", "main"), sh(E, "rev-parse", "origin/main"));
+  await L.lease(repo, claude, "release");
+  const H = join(tmp, "H"); sh(tmp, "clone", "--quiet", r4, H); await writeFile(join(H, "other.md"), "o\n"); sh(H, "add", "-A"); sh(H, "commit", "--quiet", "-m", "other"); sh(H, "push", "--quiet", "origin", "main");
+  await writeFile(join(E, "mine.md"), "m\n"); await L.save(repo, claude, { message: "mine", slice: "slice/d" });
+  const up = await L.update(repo, claude, {}); assert.equal(up.updated, true); assert.equal(sh(E, "show", "HEAD:other.md"), "o");
+  assert.match(sh(E, "log", "-1", "--format=%B"), /Locker-Actor: claude/);
+});
