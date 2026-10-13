@@ -550,7 +550,7 @@ test("a slice that changed the same lines as the truth branch is refused at acce
   await L.lease(repo, claude, "release");
   // sl update on the slice: the shared line is left with git's marks, status says so, settling it and saving finishes the update
   sh(E, "checkout", "--quiet", "slice/c");
-  await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT").then((x) => { console.log("DEBUG", x.message, JSON.stringify(x.details), sh(E, "status", "--porcelain"), sh(E, "rev-parse", "--abbrev-ref", "HEAD")); assert.deepEqual(x.details.files, ["notes.md"]); assert.match(x.next, /keep the lines you want/); });
+  await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT").then((x) => { assert.deepEqual(x.details.files, ["notes.md"]); assert.match(x.next, /keep the lines you want/); });
   let st = await L.status(repo); assert.ok(st.problems.some((p) => p.startsWith("UPDATE WAITING")), st.problems.join("|"));
   await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT");
   assert.match(await readFile(join(E, "notes.md"), "utf8"), /<<<<<<< /);
@@ -569,7 +569,7 @@ test("a slice that changed the same lines as the truth branch is refused at acce
   await L.lease(repo, claude, "release");
   // update refuses on the truth branch and a clean update on a slice is one save
   await rejects(L.update(repo, rick, {}), "BAD_SLICE");
-  const G = join(tmp, "G"); sh(tmp, "clone", "--quiet", r4, G); await writeFile(join(G, "other.md"), "o\n"); sh(G, "add", "-A"); sh(G, "commit", "--quiet", "-m", "other"); sh(G, "push", "--quiet", "origin", "main");
+  const H = join(tmp, "H"); sh(tmp, "clone", "--quiet", r4, H); await writeFile(join(H, "other.md"), "o\n"); sh(H, "add", "-A"); sh(H, "commit", "--quiet", "-m", "other"); sh(H, "push", "--quiet", "origin", "main");
   await writeFile(join(E, "mine.md"), "m\n"); await L.save(repo, claude, { message: "mine", slice: "slice/d" });
   const up = await L.update(repo, claude, {}); assert.equal(up.updated, true); assert.equal(sh(E, "show", "HEAD:other.md"), "o");
   assert.match(sh(E, "log", "-1", "--format=%B"), /Locker-Actor: claude/);
