@@ -28,16 +28,8 @@ const SLICE_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
 
 async function gitDir(top) { const d = await git(top, ["rev-parse", "--git-dir"]); return resolve(top, d); }
 
-/** Resolve a repo: a git work tree whose remote truth branch (or, before the first backup, the local one) carries locker.json. */
-export async function openRepo(cwd = process.cwd()) {
-  const top = await topLevel(cwd);
-  if (!top) throw new LockerError("UNMANAGED", `${cwd} is not inside a git work tree. Sim Locker refuses to work in a plain folder; clone the project instead (sl clone <url>).`);
-  let local; try { local = JSON.parse(await readFile(join(top, CONFIG), "utf8")); }
-  catch (e) { throw new LockerError("UNMANAGED", `${top} has a .git but no readable ${CONFIG}. Run sl init here if this folder is meant to be managed.`, { cause: String(e) }); }
-  for (const key of ["project", "truth", "remote", "actors"]) if (!(key in local)) throw new LockerError("CONFIG", `${CONFIG} lacks "${key}"`);
-  const remoteUrl = await git(top, ["remote", "get-url", local.remote], { allowFail: true });
-  if (remoteUrl === null) throw new LockerError("UNMANAGED", `remote "${local.remote}" is not configured in ${top}`);
-  // the config that rules is the one on the remote truth branch; the working tree copy only bootstraps a project that has never been backed up
+/** The config that rules is the one on the remote truth branch; the working tree copy only bootstraps a project that has never been backed up. */
+async function loadConfig(top, local) {
   let config = local, configFrom = "working tree";
   for (const ref of [`${local.remote}/${local.truth}`, local.truth]) {
     const text = await git(top, ["show", `${ref}:${CONFIG}`], { allowFail: true });
@@ -48,11 +40,28 @@ export async function openRepo(cwd = process.cwd()) {
   config.lease = { ttlMinutes: 30, ...(config.lease ?? {}) };
   config.live = config.live ?? { kind: "none" };
   config.confirm = config.confirm ?? ["accept", "revert"];
-  // accept.gate: a command run in the repo before accepting (a project's own checks); accept.trailing: record files, not code, that may
-  // change after the reviewed head (a delivery ledger, say). Review records themselves may only be added, never changed.
-  config.accept = { gate: null, trailing: [], ...(config.accept ?? {}) };
+  // accept.gate: a command run on the slice's tree before accepting (a project's own checks); accept.trailing: record files, not code,
+  // that may change after the reviewed head (a delivery ledger, say). Review records and locker.json are never trailing.
+  config.accept = { gate: null, gateTimeoutSeconds: 900, trailing: [], ...(config.accept ?? {}) };
   if (config.accept.gate !== null && !(Array.isArray(config.accept.gate) && config.accept.gate.every((x) => typeof x === "string") && config.accept.gate.length)) throw new LockerError("CONFIG", "accept.gate must be a list of strings (the command and its arguments)");
   if (!Array.isArray(config.accept.trailing) || !config.accept.trailing.every((x) => typeof x === "string")) throw new LockerError("CONFIG", "accept.trailing must be a list of path patterns");
+  for (const pat of config.accept.trailing) {
+    const re = globToRegExp(pat);
+    if (["locker.json", "locker/reviews/rev_000000000000.json", "locker/live/x.json", ".gitattributes", ".github/workflows/x.yml"].some((f) => re.test(f))) throw new LockerError("CONFIG", `accept.trailing pattern "${pat}" would cover locker.json, locker/, .gitattributes or the workflows; those are never trailing`);
+  }
+  return { config, configFrom };
+}
+
+/** Resolve a repo: a git work tree whose remote truth branch (or, before the first backup, the local one) carries locker.json. */
+export async function openRepo(cwd = process.cwd()) {
+  const top = await topLevel(cwd);
+  if (!top) throw new LockerError("UNMANAGED", `${cwd} is not inside a git work tree. Sim Locker refuses to work in a plain folder; clone the project instead (sl clone <url>).`);
+  let local; try { local = JSON.parse(await readFile(join(top, CONFIG), "utf8")); }
+  catch (e) { throw new LockerError("UNMANAGED", `${top} has a .git but no readable ${CONFIG}. Run sl init here if this folder is meant to be managed.`, { cause: String(e) }); }
+  for (const key of ["project", "truth", "remote", "actors"]) if (!(key in local)) throw new LockerError("CONFIG", `${CONFIG} lacks "${key}"`);
+  const remoteUrl = await git(top, ["remote", "get-url", local.remote], { allowFail: true });
+  if (remoteUrl === null) throw new LockerError("UNMANAGED", `remote "${local.remote}" is not configured in ${top}`);
+  const { config, configFrom } = await loadConfig(top, local);
   const repo = { top, config, configFrom, remoteUrl, gitDir: await gitDir(top) };
   await registerClone(repo);                                           // every clone that runs the tool is known to the registry
   return repo;
@@ -74,19 +83,27 @@ export async function actorFromEnv(repo, env = process.env) {
 
 /** A simple glob: * matches within a path segment, ** across segments. */
 function globToRegExp(pattern) {
-  const esc = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*");
+  const esc = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*\//g, "\0").replace(/\*\*/g, "\x01").replace(/\*/g, "[^/]*").replace(/\0/g, "(?:.*/)?").replace(/\x01/g, ".*");
   return new RegExp(`^${esc}$`);
 }
 
-/** Run a project's own gate command in the repo, with the actor in its environment. Never a shell. */
-function runGate(repo, cmd, args, actor) {
-  return new Promise((done) => {
-    const c = spawn(cmd, args, { cwd: repo.top, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, SL_ACTOR: actor.name, SL_SESSION: actor.session } });
-    let output = "";
-    c.stdout.on("data", (d) => { output += d; }); c.stderr.on("data", (d) => { output += d; });
-    c.on("error", (e) => done({ code: 127, output: String(e) }));
-    c.on("close", (code) => done({ code, output }));
-  });
+/** Run a project's own gate command on a clean checkout of exactly the commit being accepted, with the actor in its environment and a
+ * timeout. Never a shell, never the working tree (ignored or excluded files there would count). */
+async function runGate(repo, head, actor) {
+  const [cmd, ...args] = repo.config.accept.gate;
+  const dir = join(repo.gitDir, `locker-gate-${head.slice(0, 12)}`);
+  await git(repo.top, ["worktree", "remove", "--force", dir], { allowFail: true });
+  await git(repo.top, ["worktree", "add", "--detach", "--quiet", dir, head]);
+  try {
+    return await new Promise((done) => {
+      const c = spawn(cmd, args, { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, SL_ACTOR: actor.name, SL_SESSION: actor.session, SL_GATE_COMMIT: head } });
+      let output = "", ended = false;
+      const t = setTimeout(() => { if (!ended) { output += `\n(gate killed after ${repo.config.accept.gateTimeoutSeconds} s)`; c.kill("SIGKILL"); } }, repo.config.accept.gateTimeoutSeconds * 1000);
+      c.stdout.on("data", (d) => { output += d; }); c.stderr.on("data", (d) => { output += d; });
+      c.on("error", (e) => { ended = true; clearTimeout(t); done({ code: 127, output: output + String(e) }); });
+      c.on("close", (code) => { ended = true; clearTimeout(t); done({ code: code ?? 137, output }); });
+    });
+  } finally { await git(repo.top, ["worktree", "remove", "--force", dir], { allowFail: true }); }
 }
 
 const ident = (actor) => ["-c", `user.name=${actor.name}`, "-c", `user.email=${actor.name}@simlocker.local`];
@@ -390,11 +407,17 @@ async function committedReview(repo, head, reviewId) {
 }
 
 /** accepted: squash-merge a reviewed slice onto the truth branch, under the lease, in two steps. */
-export async function accept(repo, actor, { slice, reviewId, message, confirm }) {
+export async function accept(repo0, actor, { slice, reviewId, message, confirm }) {
+  let repo = repo0;
   const { truth, remote } = repo.config;
   checkSliceName(repo, slice);
   const f = await freshen(repo, { force: true });
   if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${remote}; accepting needs the remote`);
+  // the config that rules is the one on the remote truth branch as just fetched, not whatever the local tracking ref said when the repo was opened
+  const fresh = await loadConfig(repo.top, repo.config);
+  if (fresh.configFrom !== `${remote}/${truth}`) throw new LockerError("CONFIG", `${CONFIG} is not on ${remote}/${truth}; back the truth branch up before accepting`);
+  repo = { ...repo, config: fresh.config, configFrom: fresh.configFrom };
+  if (!(actor.name in repo.config.actors)) throw new LockerError("NO_ACTOR", `${actor.name} is not an actor in ${CONFIG} on ${remote}/${truth}`);
   const t = await truthState(repo);
   if (t.stale) throw new LockerError("STALE", `${truth} is behind the remote; pull first`);
   if (t.ahead > 0) throw new LockerError("DIVERGED", `${truth} has local commits the remote does not; this needs a person`);
@@ -411,25 +434,25 @@ export async function accept(repo, actor, { slice, reviewId, message, confirm })
     // the review record itself is committed after the review, so commits after range.to may only ADD files under locker/reviews/
     const ancestor = await git(repo.top, ["merge-base", "--is-ancestor", r.range.to, head], { allowFail: true });
     if (ancestor === null) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers ${String(r.range.to).slice(0, 7)}, which is not in the history of ${slice}`);
-    const since = (await git(repo.top, ["diff", "--name-status", "--no-renames", `${r.range.to}..${head}`])).split("\n").filter(Boolean);
+    const z = (await git(repo.top, ["diff", "--name-status", "--no-renames", "-z", `${r.range.to}..${head}`])).split("\0").filter(Boolean);
+    const since = []; for (let i = 0; i + 1 < z.length; i += 2) since.push({ st: z[i], file: z[i + 1] });
     const trailing = repo.config.accept.trailing.map(globToRegExp);
-    const outside = since.filter((l) => { const [st, file] = l.split("\t"); return !((st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(file)) || trailing.some((re) => re.test(file))); });
-    if (outside.length) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers up to ${String(r.range.to).slice(0, 7)} but ${slice} is now at ${head.slice(0, 7)} and changed ${outside.slice(0, 5).map((l) => l.replace("\t", " ")).join(", ")}; review the new commits`);
+    const outside = since.filter(({ st, file }) => !((st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(file)) || trailing.some((re) => re.test(file))));
+    if (outside.length) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers up to ${String(r.range.to).slice(0, 7)} but ${slice} is now at ${head.slice(0, 7)} and changed ${outside.slice(0, 5).map((x) => `${x.st} ${x.file}`).join(", ")}; review the new commits`);
   }
   for (const [file, blob] of Object.entries(r.cited ?? {})) if ((await blobAt(repo.top, head, file)) !== blob) throw new LockerError("REVIEW_STALE", `review ${reviewId} cites ${file} at ${String(blob).slice(0, 7)} but the slice has a different version`);
   if (r.verdict !== "pass") throw new LockerError("REVIEW_BLOCKS", `review ${reviewId} says ${r.verdict}: ${String(r.findings).slice(0, 200)}`);
-  if (repo.config.accept.gate) {
-    const [cmd, ...args] = repo.config.accept.gate;
-    const gate = await runGate(repo, cmd, args, actor);
-    if (gate.code !== 0) throw new LockerError("GATE_FAILED", `the project's own gate refused (${repo.config.accept.gate.join(" ")}, exit ${gate.code}):\n${gate.output.trim().split("\n").slice(-12).join("\n")}`, { output: gate.output });
-  }
   const commits = await range(repo.top, base, head);
   const pending = await requireConfirm(repo, actor, "accept", { slice, head, reviewId }, confirm);
-  if (pending) return { ...pending, slice, head, commits: commits.length, review: reviewId };
+  if (pending) return { ...pending, slice, head, commits: commits.length, review: reviewId, gate: repo.config.accept.gate ? `${repo.config.accept.gate.join(" ")} will run on ${head.slice(0, 7)} at the confirm step` : null };
+  if (repo.config.accept.gate) {
+    const gate = await runGate(repo, head, actor);
+    if (gate.code !== 0) throw new LockerError("GATE_FAILED", `the project's own gate refused (${repo.config.accept.gate.join(" ")} on ${head.slice(0, 7)}, exit ${gate.code}):\n${gate.output.trim().split("\n").slice(-12).join("\n")}`, { output: gate.output });
+  }
   const was = await currentBranch(repo.top);
   await git(repo.top, ["checkout", "--quiet", truth]);
   try {
-    await git(repo.top, [...ident(actor), "merge", "--squash", "--quiet", slice]);
+    await git(repo.top, [...ident(actor), "merge", "--squash", "--quiet", head]);
     const body = `${message ?? `accept ${slice}`}\n\n${trailers({ Slice: slice, "Range-Head": head, "Range-Base": base, Review: reviewId, Actor: `${actor.name} (${actor.kind})`, Session: actor.session })}\n`;
     await git(repo.top, [...ident(actor), "commit", "--quiet", "-F", "-"], { input: body });
     const merge = await revParse(repo.top, "HEAD");

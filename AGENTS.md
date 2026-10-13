@@ -44,3 +44,4 @@ To try a change by hand, make a temp project: `git init --bare -b main /tmp/r.gi
 - Codex / Astra over MCP or CLI: both exist; the CLI is the fallback.
 - Large binaries (screenshots, zips): default, nothing special; git LFS is the obvious next step if a project needs it.
 - The 1,500-line budget: a proposal.
+- A review record is a file the acceptor commits, so the acceptor can rewrite a reviewer's verdict before the record's first commit; the add-only rule cannot see that (found in the 0.2 review). Options: reviewers commit their own records from their own clone or session, or records carry a signature. Rick's call; until then the records are trusted as written.

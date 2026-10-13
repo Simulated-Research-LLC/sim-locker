@@ -1,6 +1,6 @@
 # Sim Locker: design
 
-Version 0.1, 2026-10-12. Written after reading morluto/rea and NationalSecurityAgency/ghidra in full (notes: `docs/reading-rea-and-ghidra.md`), an adversarial audit of the first draft (`docs/audit-0.1.md`), and an adversarial review of the first build (`docs/review-0.1.md`, verdict block, every critical and high item fixed with a test). Everything marked **Rick** is a question he has not answered; the tool ships with the default stated and refuses nothing it does not have to.
+Version 0.2, 2026-10-13 (0.1 on 2026-10-12). Written after reading morluto/rea and NationalSecurityAgency/ghidra in full (notes: `docs/reading-rea-and-ghidra.md`), an adversarial audit of the first draft (`docs/audit-0.1.md`), and an adversarial review of the first build (`docs/review-0.1.md`, verdict block, every critical and high item fixed with a test). Everything marked **Rick** is a question he has not answered; the tool ships with the default stated and refuses nothing it does not have to.
 
 ## What it is
 

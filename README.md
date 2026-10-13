@@ -93,7 +93,7 @@ Projects with their own checks keep them. Two settings in `locker.json`:
 }
 ```
 
-`gate` is a command (no shell) run in the repo before `accept` goes ahead, with `SL_ACTOR` and `SL_SESSION` in its environment; a non-zero exit refuses with `GATE_FAILED` and the command's last lines. `trailing` lists record files that may change after the reviewed head without making the review stale (a delivery ledger written at acceptance time); review records themselves may only be added. Nothing else may change after the review.
+`gate` is a command (no shell, so `node x.js`, not `npm.cmd test`) run at the confirm step of `accept`, in a clean temporary checkout of exactly the commit being accepted (never the working tree, so ignored or stray files there count for nothing), with `SL_ACTOR`, `SL_SESSION` and `SL_GATE_COMMIT` in its environment and a timeout (`gateTimeoutSeconds`, default 900). A non-zero exit refuses with `GATE_FAILED` and the command's last lines. `trailing` lists record files that may change after the reviewed head without making the review stale (a delivery ledger written at acceptance time). Patterns that would cover `locker.json`, `locker/`, `.gitattributes` or the workflows are refused; review records may only be added, never changed; a trailing file the slice changed before the review is still a cited file and still checked. `accept` re-reads `locker.json` from the remote truth branch after its own fetch, so a forged local tracking ref cannot switch the gate off.
 
 ## For agents: the MCP server
 
