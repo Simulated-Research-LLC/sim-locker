@@ -22,6 +22,7 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 | `src/git.js` | `git(cwd, args, {input, allowFail})` and small helpers. `allowFail` returns null instead of throwing |
 | `src/merge-record.js` | `mergeKeys`, `mergeJson`, `mergeFrontmatter`, `mergeRecordFiles` (the git entry point) |
 | `src/mcp.js` | `buildServer(cwd)`: seven tools over the core |
+| `docs/review-0.1.md` | the adversarial review of the first build and the fix status of every finding; the attack list to rerun after any change to `accept`, `save` or the lease |
 | `bin/sl.js` | argument parsing and plain-text printing only; no logic |
 | `test/*.test.js` | temp bare remote plus two clones |
 

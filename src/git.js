@@ -1,6 +1,13 @@
 // Thin, honest wrapper around the git executable. Every call returns what git said; nothing here retries, guesses or force-pushes.
 import { spawn } from "node:child_process";
 
+/** The environment git runs in: no prompts, no editor, and no author or committer overrides, so the actor stamp cannot be bypassed. */
+function cleanEnv() {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true" };
+  for (const k of Object.keys(env)) if (/^GIT_(AUTHOR|COMMITTER)_/.test(k)) delete env[k];
+  return env;
+}
+
 export class GitError extends Error {
   constructor(args, code, stderr) {
     super(`git ${args.join(" ")} failed (${code}): ${stderr.trim()}`);
@@ -11,7 +18,7 @@ export class GitError extends Error {
 /** Run git in cwd, feeding `input` on stdin if given. Returns trimmed stdout. Throws GitError on a non-zero exit. */
 export function git(cwd, args, { input, allowFail = false } = {}) {
   return new Promise((resolveP, reject) => {
-    const child = spawn("git", args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true" } });
+    const child = spawn("git", args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: cleanEnv() });
     let out = "", err = "";
     child.stdout.on("data", (d) => { out += d; }); child.stderr.on("data", (d) => { err += d; });
     child.on("error", (e) => (allowFail ? resolveP(null) : reject(new GitError(args, "spawn", String(e)))));
@@ -44,13 +51,4 @@ export async function aheadBehind(cwd, local, remote) {
   if (out === null) return { ahead: null, behind: null };
   const [ahead, behind] = out.split(/\s+/).map(Number);
   return { ahead, behind };
-}
-
-/** The age in seconds of the last fetch, or null if there has never been one. */
-export async function lastFetchAge(cwd) {
-  const { stat } = await import("node:fs/promises");
-  const top = await topLevel(cwd); if (!top) return null;
-  const gitDir = await git(cwd, ["rev-parse", "--git-dir"]);
-  const { join, isAbsolute } = await import("node:path");
-  try { const s = await stat(join(isAbsolute(gitDir) ? gitDir : join(top, gitDir), "FETCH_HEAD")); return (Date.now() - s.mtimeMs) / 1000; } catch { return null; }
 }

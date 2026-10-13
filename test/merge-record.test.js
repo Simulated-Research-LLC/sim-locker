@@ -33,6 +33,12 @@ test("yaml frontmatter merges per key and the body as a whole", () => {
   assert.deepEqual(c.conflicts, ["title"]); assert.match(c.text, /<<<<<<< ours\ntitle: C\n=======\ntitle: B\n>>>>>>> theirs/);
   const bodyConflict = mergeFrontmatter(base, base.replace("body", "ours body"), theirs);
   assert.ok(bodyConflict.conflicts.includes("(body)"));
+  // a key inserted at the top on one side is not a conflict with a value change on the other
+  const reordered = mergeFrontmatter(base, "---\nnew: 1\n" + base.slice(4), theirs);
+  assert.deepEqual(reordered.conflicts, []); assert.match(reordered.text, /^---\nnew: 1\ntitle: B\n/);
+  // CRLF input is normalised instead of hiding keys
+  const crlf = mergeFrontmatter(base.replace(/\n/g, "\r\n"), ours.replace(/\n/g, "\r\n"), theirs.replace(/\n/g, "\r\n"));
+  assert.deepEqual(crlf.conflicts, []); assert.match(crlf.text, /status: done/);
 });
 
 test("git uses the driver through .gitattributes", async () => {

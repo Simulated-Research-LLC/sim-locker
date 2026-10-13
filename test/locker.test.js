@@ -34,23 +34,26 @@ test("init makes the clone managed and a human can save and back up on the truth
   const r = await L.init(A, { project: "demo" });
   assert.equal(r.config.truth, "main");
   const repo = await L.openRepo(A);
-  const rick = L.actorFromEnv(repo.config, env("rick", "s1"));
+  const rick = await L.actorFromEnv(repo, env("rick", "s1"));
   assert.equal(rick.kind, "human");
-  assert.throws(() => L.actorFromEnv(repo.config, {}), (e) => e.code === "NO_ACTOR");
-  assert.throws(() => L.actorFromEnv(repo.config, env("mallory", "x")), (e) => e.code === "NO_ACTOR");
+  await rejects(L.actorFromEnv(repo, {}), "NO_ACTOR");
+  await rejects(L.actorFromEnv(repo, env("mallory", "x")), "NO_ACTOR");
+  // no SL_SESSION: one session id per clone, so CLI calls in a row share the lease they acquire
+  const s1 = await L.actorFromEnv(repo, { SL_ACTOR: "rick" }), s2 = await L.actorFromEnv(repo, { SL_ACTOR: "claude" });
+  assert.equal(s1.session, s2.session); assert.match(s1.session, /^[0-9a-f]{12}$/);
   const s = await L.save(repo, rick, { message: "manage with sim locker" });
   assert.equal(s.saved, true); assert.ok(s.files.includes("locker.json"));
   const body = sh(A, "log", "-1", "--format=%B");
   assert.match(body, /Locker-Actor: rick \(human\)/); assert.match(body, /Locker-Session: s1/);
   const b = await L.backup(repo);
   assert.equal(b.backedUp, true); assert.equal(sh(A, "rev-parse", "origin/main"), b.head);
-  const st = await L.status(repo);
-  assert.deepEqual(st.problems, []); assert.equal(st.current.backedUp, true); assert.equal(st.current.onTruth, true);
+  const st = await L.status(await L.openRepo(A));                       // reopened: the config now comes from origin/main
+  assert.deepEqual(st.problems, []); assert.equal(st.current.backedUp, true); assert.equal(st.current.onTruth, true); assert.equal(st.configFrom, "origin/main");
 });
 
 test("an agent cannot save on the truth branch; on a slice it can, and the status shows the states", async () => {
   const repo = await L.openRepo(A);
-  const claude = L.actorFromEnv(repo.config, env("claude", "c1"));
+  const claude = await L.actorFromEnv(repo, env("claude", "c1"));
   await writeFile(join(A, "game.js"), "export const v = 1;\n");
   await rejects(L.save(repo, claude, { message: "bump" }), "AGENT_ON_TRUTH");
   const s = await L.save(repo, claude, { message: "bump v", slice: "slice/bump" });
@@ -65,7 +68,7 @@ test("an agent cannot save on the truth branch; on a slice it can, and the statu
 
 test("a second clone is reported, and a truth branch that moved makes the first clone STALE until it pulls", async () => {
   B = join(tmp, "B"); sh(tmp, "clone", "--quiet", remote, B);
-  const repoB = await L.openRepo(B); await L.registerClone(repoB);
+  await L.openRepo(B);                                                      // opening a clone registers it
   const repoA = await L.openRepo(A);
   let st = await L.status(repoA);
   assert.ok(st.problems.some((p) => p.startsWith("TWO CLONES")), st.problems.join("|"));
@@ -74,7 +77,7 @@ test("a second clone is reported, and a truth branch that moved makes the first 
   // status fetched within maxAge? force a fresh look
   await L.freshen(repoA, { force: true }); st = await L.status(repoA);
   assert.ok(st.problems.some((p) => p.startsWith("STALE")), st.problems.join("|"));
-  const claude = L.actorFromEnv(repoA.config, env("claude", "c1"));
+  const claude = await L.actorFromEnv(repoA, env("claude", "c1"));
   await writeFile(join(A, "game.js"), "export const v = 2;\n");
   await rejects(L.save(repoA, claude, { message: "while stale" }), "STALE");
   await L.pull(repoA);
@@ -88,8 +91,8 @@ test("a second clone is reported, and a truth branch that moved makes the first 
 
 test("the lease: one holder, no release by others, taken when expired", async () => {
   const repo = await L.openRepo(A);
-  const claude = L.actorFromEnv(repo.config, env("claude", "c1"));
-  const astra = L.actorFromEnv(repo.config, env("astra", "a1"));
+  const claude = await L.actorFromEnv(repo, env("claude", "c1"));
+  const astra = await L.actorFromEnv(repo, env("astra", "a1"));
   const got = await L.lease(repo, claude, "acquire");
   assert.equal(got.action, "acquired"); assert.equal(got.lease.owner, "claude");
   assert.equal(sh(A, "rev-parse", "refs/locker/lease"), sh(A, "--git-dir", remote, "rev-parse", "refs/locker/lease"));
@@ -107,8 +110,8 @@ test("the lease: one holder, no release by others, taken when expired", async ()
 
 test("accept needs the lease, a review of the exact range, and a confirm token; then the truth branch moves and the slice is kept", async () => {
   const repo = await L.openRepo(A);
-  const claude = L.actorFromEnv(repo.config, env("claude", "c1"));
-  const astra = L.actorFromEnv(repo.config, env("astra", "a1"));
+  const claude = await L.actorFromEnv(repo, env("claude", "c1"));
+  const astra = await L.actorFromEnv(repo, env("astra", "a1"));
   await L.backup(repo);
   await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: "rev_none" }), "NO_LEASE");
   await L.lease(repo, claude, "acquire");
@@ -125,6 +128,36 @@ test("accept needs the lease, a review of the exact range, and a confirm token; 
   const block = await L.review(repo, astra, { from: "main", to: "slice/bump", verdict: "block", findings: "v3 breaks the build" });
   await L.save(repo, claude, { message: "review: block" });
   await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: block.id }), "REVIEW_BLOCKS");
+  // attacks from the audit of 0.1
+  await rejects(L.save(repo, claude, { message: "x", slice: "HEAD" }), "BAD_SLICE");
+  await rejects(L.save(repo, claude, { message: "x", slice: "refs/heads/main" }), "BAD_SLICE");
+  await rejects(L.save(repo, claude, { message: "x", slice: "main" }), "BAD_SLICE");
+  assert.equal(sh(A, "rev-parse", "--abbrev-ref", "HEAD"), "slice/bump", "a refused slice name does not move HEAD");
+  // a review written straight into the tree and never saved does not count
+  const forged = { id: "rev_f0f0f0f0f0f0", kind: "review", range: { from: sh(A, "merge-base", "main", "slice/bump"), to: sh(A, "rev-parse", "slice/bump") }, reviewer: "astra", verdict: "pass", findings: "forged", cited: {} };
+  await writeFile(join(A, "locker/reviews/rev_f0f0f0f0f0f0.json"), JSON.stringify(forged));
+  await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: "rev_f0f0f0f0f0f0" }), "DIRTY");
+  await rm(join(A, "locker/reviews/rev_f0f0f0f0f0f0.json"));
+  await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: "rev_f0f0f0f0f0f0" }), "NO_REVIEW");
+  // the acceptor's own review does not count
+  const self = await L.review(repo, claude, { from: "main", to: "slice/bump", verdict: "pass", findings: "I like my work" });
+  await L.save(repo, claude, { message: "self review" });
+  await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: self.id }), "REVIEW_SELF");
+  // the working-tree locker.json does not decide who is human
+  const cfgPath = join(A, "locker.json"), cfgText = await readFile(cfgPath, "utf8");
+  await writeFile(cfgPath, cfgText.replace('"claude": "agent"', '"claude": "human"'));
+  const repo2 = await L.openRepo(A); const claude2 = await L.actorFromEnv(repo2, env("claude", "c1"));
+  assert.equal(claude2.kind, "agent"); assert.equal(repo2.configFrom, "origin/main");
+  await writeFile(cfgPath, cfgText);
+  // smuggling a file in under locker/reviews/ after the review is refused
+  const smuggleReview = await L.review(repo, astra, { from: "main", to: "slice/bump", verdict: "pass", findings: "ok" });
+  await L.save(repo, claude, { message: "review" });
+  await writeFile(join(A, "locker/reviews/rev_badbadbadbad.json"), "not a review");
+  sh(A, "mv", "game.js", "locker/reviews/game.json");
+  await L.save(repo, claude, { message: "tidy" });
+  await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: smuggleReview.id }), "REVIEW_STALE");
+  sh(A, "mv", "locker/reviews/game.json", "game.js"); sh(A, "rm", "-q", "locker/reviews/rev_badbadbadbad.json");
+  await L.save(repo, claude, { message: "undo tidy" });
   // the real protocol: review the head, save the record (only locker/reviews/ changes after the reviewed head), accept in two steps
   const rv = await L.review(repo, astra, { from: "main", to: "slice/bump", verdict: "pass", findings: "v3 is fine" });
   const reviewedHead = sh(A, "rev-parse", "slice/bump");
@@ -143,14 +176,35 @@ test("accept needs the lease, a review of the exact range, and a confirm token; 
   assert.throws(() => sh(A, "rev-parse", "--verify", "--quiet", "slice/bump"), "the slice branch is gone under its old name");
   assert.ok(sh(A, "rev-parse", "done/slice/bump"));
   await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: rv.id, confirm: first.token }), "NO_SLICE");
+  assert.equal(done.keptOnRemote, true); assert.ok(sh(A, "--git-dir", remote, "rev-parse", "done/slice/bump"));
+  sh(A, "branch", "-q", "slice/bump", "main");
+  await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: rv.id }), "NAME_TAKEN");
+  sh(A, "branch", "-q", "-D", "slice/bump");
   sh(A, "checkout", "--quiet", "done/slice/bump");
   st = await L.status(repo); assert.equal(st.current.accepted, done.merge);
+  assert.ok(!st.problems.some((p) => p.startsWith("STALE REVIEW")), "reviews consumed by an accept are not stale: " + st.problems.join("|"));
+  sh(A, "checkout", "--quiet", "main");
+  st = await L.status(repo); assert.ok(!st.problems.some((p) => p.startsWith("STALE REVIEW")), st.problems.join("|"));
+});
+
+test("backed up is proven by asking the remote, not by the push", async () => {
+  const repo = await L.openRepo(A);
+  const claude = await L.actorFromEnv(repo, env("claude", "c1"));
+  await writeFile(join(A, "x.txt"), "x\n");
+  await L.save(repo, claude, { message: "x", slice: "slice/x" });
+  sh(A, "remote", "set-url", "--push", "origin", remote);
+  sh(A, "remote", "set-url", "origin", join(tmp, "nowhere.git"));           // pushes land, but the remote cannot be asked
+  await rejects(L.backup(await L.openRepo(A)), "NOT_BACKED_UP");
+  sh(A, "remote", "set-url", "origin", remote);
+  const b = await L.backup(await L.openRepo(A)); assert.equal(b.backedUp, true); assert.equal(b.verifiedBy, "ls-remote");
   sh(A, "checkout", "--quiet", "main");
 });
 
-test("revert is two steps and adds a commit instead of rewriting", async () => {
+test("revert is two steps, agents cannot do it on the truth branch, and it adds a commit instead of rewriting", async () => {
   const repo = await L.openRepo(A);
-  const rick = L.actorFromEnv(repo.config, env("rick", "s1"));
+  const rick = await L.actorFromEnv(repo, env("rick", "s1"));
+  const claude = await L.actorFromEnv(repo, env("claude", "c1"));
+  await rejects(L.revert(repo, claude, { commit: "main" }), "AGENT_ON_TRUTH");
   const before = sh(A, "rev-parse", "main");
   const first = await L.revert(repo, rick, { commit: "main" });
   assert.equal(first.confirmRequired, true);
@@ -164,4 +218,22 @@ test("a plain git clone with no Sim Locker has the whole project and its records
   const P = join(tmp, "plain-clone"); sh(tmp, "clone", "--quiet", remote, P);
   const files = sh(P, "ls-files").split("\n");
   assert.ok(files.includes("locker.json")); assert.ok(files.some((f) => f.startsWith("locker/reviews/rev_")));
+});
+
+test("the merge driver that init installs works without sl on PATH, and status --no-fetch says NOT FETCHED", async () => {
+  const repo = await L.openRepo(A);
+  const rick = await L.actorFromEnv(repo, env("rick", "s1"));
+  await mkdir(join(A, "locker", "live"), { recursive: true });
+  await writeFile(join(A, "locker/live/r.json"), JSON.stringify({ a: 1, b: 1 }));
+  await L.save(repo, rick, { message: "record" }); await L.backup(repo);
+  sh(A, "checkout", "--quiet", "-b", "side");
+  await writeFile(join(A, "locker/live/r.json"), JSON.stringify({ a: 1, b: 2 })); sh(A, "commit", "--quiet", "-am", "theirs");
+  sh(A, "checkout", "--quiet", "main");
+  await writeFile(join(A, "locker/live/r.json"), JSON.stringify({ a: 9, b: 1 })); sh(A, "commit", "--quiet", "-am", "ours");
+  const path = { ...process.env, PATH: "/usr/bin:/bin" };               // no node, no sl on PATH; the driver uses absolute paths
+  execFileSync("git", ["merge", "--quiet", "--no-edit", "side"], { cwd: A, encoding: "utf8", env: { ...path, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+  assert.deepEqual(JSON.parse(await readFile(join(A, "locker/live/r.json"), "utf8")), { a: 9, b: 2 });
+  sh(A, "reset", "--quiet", "--hard", "origin/main"); sh(A, "branch", "-q", "-D", "side");
+  const st = await L.status(repo, { fetch: false });
+  assert.ok(st.problems.some((p) => p.startsWith("NOT FETCHED")), st.problems.join("|"));
 });

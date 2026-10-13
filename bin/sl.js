@@ -75,7 +75,7 @@ async function main() {
 
   const repo = await L.openRepo(process.cwd());
   const needActor = !["status", "backup", "pull", "find"].includes(cmd);
-  const actor = needActor ? L.actorFromEnv(repo.config) : null;
+  const actor = needActor ? await L.actorFromEnv(repo) : null;
   switch (cmd) {
     case "status": { const s = await L.status(repo, { fetch: !opt["no-fetch"] }); out(s); return s.problems.length ? 2 : 0; }
     case "save": out(await L.save(repo, actor, { message: opt.message, paths: args, slice: opt.slice })); return 0;
@@ -95,7 +95,7 @@ async function main() {
 }
 
 main().then((code) => process.exit(code ?? 0), (e) => {
-  const code = e.code ?? "ERROR";
+  const code = e instanceof L.LockerError ? e.code : "GIT";
   if (opt.json) process.stdout.write(JSON.stringify({ error: code, message: e.message, details: e.details ?? null }) + "\n");
   else process.stderr.write(`${code}: ${e.message}\n`);
   process.exit(1);

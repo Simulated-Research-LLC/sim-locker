@@ -39,17 +39,17 @@ function splitFrontmatter(text) {
 /** Group frontmatter lines by their top-level key. Continuation lines (indented, or "- " items) belong to the key above. */
 export function frontmatterKeys(front) {
   const out = {}; let cur = null, i = 0;
-  for (const line of front.split("\n")) {
+  for (const line of front.replace(/\r\n/g, "\n").split("\n")) {
     const m = /^([A-Za-z0-9_][A-Za-z0-9_.-]*):(.*)$/.exec(line);
-    if (m) { cur = m[1]; out[cur] = { text: line, order: i++ }; }
-    else if (cur !== null) out[cur].text += "\n" + line;
-    else out[`#${i++}`] = { text: line, order: i };
+    if (m) { cur = m[1]; out[cur] = line; i++; }
+    else if (cur !== null) out[cur] += "\n" + line;
+    else out[`#${i++}`] = line;
   }
   return out;
 }
 
 export function mergeFrontmatter(baseText, oursText, theirsText) {
-  const b = splitFrontmatter(baseText), o = splitFrontmatter(oursText), t = splitFrontmatter(theirsText);
+  const b = splitFrontmatter(baseText.replace(/\r\n/g, "\n")), o = splitFrontmatter(oursText.replace(/\r\n/g, "\n")), t = splitFrontmatter(theirsText.replace(/\r\n/g, "\n"));
   const conflicts = [];
   // body: plain three-way at whole-body granularity; anything finer is out of scope for 0.1
   let body;
@@ -58,8 +58,10 @@ export function mergeFrontmatter(baseText, oursText, theirsText) {
   const bk = frontmatterKeys(b.front ?? ""), ok = frontmatterKeys(o.front ?? ""), tk = frontmatterKeys(t.front ?? "");
   const { merged, conflicts: kc } = mergeKeys(bk, ok, tk);
   conflicts.push(...kc);
-  const lines = Object.entries(merged).sort((x, y) => (x[1].order ?? x[1]["<<<<<<< ours"]?.order ?? 1e9) - (y[1].order ?? y[1]["<<<<<<< ours"]?.order ?? 1e9))
-    .map(([k, v]) => "text" in v ? v.text : `<<<<<<< ours\n${v["<<<<<<< ours"]?.text ?? `# ${k}: deleted`}\n=======\n${v[">>>>>>> theirs"]?.text ?? `# ${k}: deleted`}\n>>>>>>> theirs`);
+  // key order: ours first, then anything only theirs has, in their order; order is layout, never a conflict
+  const order = [...Object.keys(ok), ...Object.keys(tk).filter((k) => !(k in ok)), ...Object.keys(bk)].filter((k, i, a) => a.indexOf(k) === i);
+  const lines = order.filter((k) => k in merged)
+    .map((k) => { const v = merged[k]; return typeof v === "string" ? v : `<<<<<<< ours\n${v["<<<<<<< ours"] ?? `# ${k}: deleted`}\n=======\n${v[">>>>>>> theirs"] ?? `# ${k}: deleted`}\n>>>>>>> theirs`; });
   const hasFront = o.front !== null || t.front !== null || b.front !== null;
   return { text: hasFront ? `---\n${lines.join("\n")}\n---\n${body}` : body, conflicts };
 }
