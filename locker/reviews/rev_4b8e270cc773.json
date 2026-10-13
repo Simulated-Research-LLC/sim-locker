@@ -1,0 +1,19 @@
+{
+ "id": "rev_4b8e270cc773",
+ "kind": "review",
+ "range": {
+  "from": "423a6841a8799ed5690d9d131844e63d4bed1399",
+  "to": "f68cfb1da1de9ac029addbc3a945e0ae081bc8ea"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791870050",
+ "verdict": "fix",
+ "findings": "README.md:58 says a private repo under a personal account needs a Team or Enterprise plan for rules to be enforced. GitHub's About rulesets page says rulesets are available in public repos on GitHub Free and in public and private repos on GitHub Pro, Team and Enterprise Cloud, so for a personal account (this repo's owner type is User) the plan is Pro, which the old text had right. The page also says nothing about the form being shown but not enforced, so that part is not backed by the cited docs; either cite where it was seen or drop it. Everything else checks out against the API: the repo is public (private false); rules/branches/main lists deletion, non_fast_forward and required_linear_history, all from ruleset 24973232; the ruleset is active, bypass_actors is empty, and its only condition is include ~DEFAULT_BRANCH, which is main today (README.md:58 says it targets main only, true while main stays the default branch); rules/branches/locker/lease is an empty list. The repo went public at 2026-10-13T03:15Z and the ruleset was created at 2026-10-13T05:35Z, which is 2026-10-12 in Denver time, so the dates in DESIGN.md:27 and docs/review-0.1.md:11 hold in local time but are 2026-10-13 in UTC. npm test: 15 pass, 0 fail. No em dashes in the three changed files.",
+ "cited": {
+  "DESIGN.md": "b62ccc31b8da71bd171edb265305bf481c6d545e",
+  "README.md": "be38b6e6d9c6df1bbd8865d88f4787fa6f444eb5",
+  "docs/review-0.1.md": "8dddac7ca746330b38afed16281f6220ab6dbfa2"
+ },
+ "created": "2026-10-13T05:40:50.283Z"
+}
