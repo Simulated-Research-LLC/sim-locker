@@ -1,0 +1,18 @@
+{
+ "id": "rev_1428a065b3f1",
+ "kind": "review",
+ "range": {
+  "from": "00996d185ac62f2feb32074dd7d184cc371818e7",
+  "to": "0236af9d8c66bdfa1361483129bbf753957f54b6"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791914152",
+ "verdict": "fix",
+ "findings": "DESIGN.md:63 the parenthetical after 'each of which found something in the handoff between the two tools' does not match the Old Winds review record on its main. The three refused real attempts found rows 17a, 17b and 17c: the ledger row left in the working tree, then in the index, then saved into the branch by sl save. None of them found the bootstrap; tooling round 1 did (row 1). 'The gate reading the working tree' is not a finding in that record at all: the reviewers confirmed the gate runs on a clean checkout (a planted excluded file failed there), and the only working tree problem mentioned is Sim Locker 0.1.1 reading locker.json from the working tree, in the Method section, about the Percept move. The claims round found records and numbers ahead of the facts (rows 4, 5, 12 to 15), not something in the handoff between the tools, so 'each of which' overstates it. Suggested wording: the tooling rounds found the bootstrap (which became 0.2.1) and the ledger row left behind on a refusal; the claims round found records ahead of the facts; the three refused attempts found the row left in the working tree, in the index, and saved into the branch. Everything else checked out: Percept main 8f184ec adds locker.json; Old Winds main has 63c1b8f with Locker trailers (review rev_04ff45f4fa72); its locker.json gate is node tools/old-winds.js accept --check and trailing is the delivery ledger; the review record exists with two tooling rounds, a claims round and rows 17a to 17c; 7 Percept tests ok in the restored clone is in that record; the src/locker.js change is one comment line and matches the 0.2.1 behaviour in README; npm test 18 of 18; no em dashes in the diff.",
+ "cited": {
+  "DESIGN.md": "b9d051234e403ebec3f63f8ef64fcaa561a4ae82",
+  "src/locker.js": "4c1c57b93e360298b1db7c2c6cdcb646cf1f3655"
+ },
+ "created": "2026-10-13T17:55:52.202Z"
+}
