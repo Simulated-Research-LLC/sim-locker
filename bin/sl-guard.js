@@ -14,22 +14,22 @@ import { resolve } from "node:path";
 
 function git(cwd, args) {
   return new Promise((done) => {
-    const c = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }); let out = "";
+    const c = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] }); let out = "";
     c.stdout.on("data", (d) => { out += d; }); c.on("error", () => done(null)); c.on("close", (code) => done(code === 0 ? out.trimEnd() : null));
   });
 }
 
 export async function guard(cwd, { before, after, forced = false }) {
-  const problems = [];
+  const problems = [], notes = [];
   if (forced) problems.push("FORCED PUSH: history on the truth branch was rewritten");
   const empty = !before || /^0+$/.test(before);
   // the actor list that rules is the one before the push; on the very first push there is no before, so the pushed one is used and said so
   const configRef = empty ? after : before;
   const text = await git(cwd, ["show", `${configRef}:locker.json`]);
   let humans = [];
-  if (text === null) problems.push(`NO CONFIG: locker.json is not in ${configRef.slice(0, 7)}; no author counts as human`);
+  if (text === null) notes.push(`NO CONFIG: locker.json is not in ${configRef.slice(0, 7)}; no author counts as human, so only commits with a Locker-Actor trailer pass`);
   else { try { humans = Object.entries(JSON.parse(text).actors ?? {}).filter(([, k]) => k === "human").map(([n]) => n); } catch { problems.push(`BAD CONFIG: locker.json in ${configRef.slice(0, 7)} is not valid JSON`); } }
-  if (empty) problems.push("FIRST PUSH: no commit before this one, so the actor list comes from the pushed commit itself");
+  if (empty) notes.push("FIRST PUSH: no commit before this one, so the actor list comes from the pushed commit itself");
   const log = await git(cwd, ["log", "--format=%H%x00%an%x00%(trailers:key=Locker-Actor,valueonly)%x00%s%x1e", empty ? after : `${before}..${after}`]);
   if (log === null) problems.push(`BAD RANGE: cannot list ${empty ? after : `${before}..${after}`} (was ${before} rewritten away?)`);
   const commits = [];
@@ -40,7 +40,7 @@ export async function guard(cwd, { before, after, forced = false }) {
     commits.push({ sha: sha.slice(0, 7), author, actor: actor || null, subject, ok: viaTool || byHuman });
     if (!viaTool && !byHuman) problems.push(`RAW PUSH ${sha.slice(0, 7)} by "${author}": not through Sim Locker and not a human actor (${humans.join(", ") || "none configured"}): ${subject}`);
   }
-  return { ok: problems.length === 0, problems, commits };
+  return { ok: problems.length === 0, problems, notes, commits };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -48,6 +48,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const [before, after] = args.filter((a) => !a.startsWith("--"));
   guard(process.cwd(), { before, after, forced: args.includes("--forced") }).then((r) => {
     for (const p of r.problems) console.log(`PROBLEM  ${p}`);
+    for (const n of r.notes) console.log(`note     ${n}`);
     for (const c of r.commits) console.log(`${c.ok ? "ok      " : "BAD     "} ${c.sha} ${c.actor ?? c.author}: ${c.subject}`);
     console.log(r.ok ? "guard: every commit came through Sim Locker or a human actor" : `guard: ${r.problems.length} problem(s)`);
     process.exit(r.ok ? 0 : 1);

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 
 let tmp, remote, A, B, L, G;
@@ -242,7 +243,8 @@ test("the guard passes commits made through the tool or by a human and fails raw
   const { guard } = await import("../bin/sl-guard.js");
   const first = sh(A, "rev-list", "--max-parents=0", "main");
   const noConfig = await guard(A, { before: first, after: "main" });
-  assert.ok(noConfig.problems.some((p) => p.startsWith("NO CONFIG")), "a before-commit without locker.json trusts nobody");
+  assert.ok(noConfig.notes.some((p) => p.startsWith("NO CONFIG")), "a before-commit without locker.json trusts no author, and says so without failing on its own");
+  assert.ok(!noConfig.problems.some((p) => p.startsWith("NO CONFIG")));
   const managed = sh(A, "log", "--diff-filter=A", "--format=%H", "main", "--", "locker.json").trim();
   const all = await guard(A, { before: managed, after: "main" });
   // one raw commit is on main from the staleness test above ("B moves main", by plain git as "t"); the guard must name exactly that one
@@ -262,11 +264,10 @@ test("the guard passes commits made through the tool or by a human and fails raw
   const promoted = await guard(A, { before: "main~2", after: "main" });
   assert.equal(promoted.commits.filter((c) => !c.ok).length, 2, JSON.stringify(promoted));
   // run as a program, the way the workflow runs it
-  const script = new URL("../bin/sl-guard.js", import.meta.url).pathname;
+  const script = fileURLToPath(new URL("../bin/sl-guard.js", import.meta.url));
   const res = spawnSync(process.execPath, [script, sh(A, "rev-parse", "main~2"), "main"], { cwd: A, encoding: "utf8" });
   assert.equal(res.status, 1); assert.match(res.stdout, /guard: 2 problem\(s\)/);
   const good = spawnSync(process.execPath, [script, sh(A, "rev-parse", "main~3"), "main~2"], { cwd: A, encoding: "utf8" });
   assert.equal(good.status, 0, good.stdout);
   sh(A, "reset", "--quiet", "--hard", "main~2");
-  sh(A, "reset", "--quiet", "--hard", "main^");
 });
