@@ -28,14 +28,9 @@ const SLICE_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
 
 async function gitDir(top) { const d = await git(top, ["rev-parse", "--git-dir"]); return resolve(top, d); }
 
-/** The config that rules is the one on the remote truth branch; the working tree copy only bootstraps a project that has never been backed up. */
-async function loadConfig(top, local) {
-  let config = local, configFrom = "working tree";
-  for (const ref of [`${local.remote}/${local.truth}`, local.truth]) {
-    const text = await git(top, ["show", `${ref}:${CONFIG}`], { allowFail: true });
-    if (text !== null) { try { config = JSON.parse(text); configFrom = ref; break; } catch { throw new LockerError("CONFIG", `${CONFIG} on ${ref} is not valid JSON`); } }
-  }
-  for (const key of ["project", "truth", "remote", "actors"]) if (!(key in config)) throw new LockerError("CONFIG", `${CONFIG} on ${configFrom} lacks "${key}"`);
+/** Fill the defaults and refuse a config that would weaken the rules. Pure: the same object comes back filled. */
+export function checkConfig(config, from = "locker.json") {
+  for (const key of ["project", "truth", "remote", "actors"]) if (!(key in config)) throw new LockerError("CONFIG", `${CONFIG} on ${from} lacks "${key}"`);
   config.fetch = { maxAgeSeconds: 300, ...(config.fetch ?? {}) };
   config.lease = { ttlMinutes: 30, ...(config.lease ?? {}) };
   config.live = config.live ?? { kind: "none" };
@@ -47,8 +42,21 @@ async function loadConfig(top, local) {
   if (!Array.isArray(config.accept.trailing) || !config.accept.trailing.every((x) => typeof x === "string")) throw new LockerError("CONFIG", "accept.trailing must be a list of path patterns");
   for (const pat of config.accept.trailing) {
     const re = globToRegExp(pat);
-    if (["locker.json", "locker/reviews/rev_000000000000.json", "locker/live/x.json", ".gitattributes", ".github/workflows/x.yml"].some((f) => re.test(f))) throw new LockerError("CONFIG", `accept.trailing pattern "${pat}" would cover locker.json, locker/, .gitattributes or the workflows; those are never trailing`);
+    if (/^(locker($|[./])|\.gitattributes|\.github|bin\/sl-guard)/.test(pat)) throw new LockerError("CONFIG", `accept.trailing pattern "${pat}" is under a protected path; locker.json, locker/, .gitattributes, .github/ and the guard are never trailing`);
+    if (["locker.json", "locker/reviews/rev_000000000000.json", "locker/live/x.json", ".gitattributes", ".github/workflows/x.yml", "bin/sl-guard.js"].some((f) => re.test(f))) throw new LockerError("CONFIG", `accept.trailing pattern "${pat}" would cover locker.json, locker/, .gitattributes, .github/ or the guard; those are never trailing`);
   }
+  if (!(Number.isInteger(config.accept.gateTimeoutSeconds) && config.accept.gateTimeoutSeconds >= 1 && config.accept.gateTimeoutSeconds <= 86400)) throw new LockerError("CONFIG", "accept.gateTimeoutSeconds must be a whole number of seconds from 1 to 86400");
+  return config;
+}
+
+/** The config that rules is the one on the remote truth branch; the working tree copy only bootstraps a project that has never been backed up. */
+async function loadConfig(top, local) {
+  let config = local, configFrom = "working tree";
+  for (const ref of [`${local.remote}/${local.truth}`, local.truth]) {
+    const text = await git(top, ["show", `${ref}:${CONFIG}`], { allowFail: true });
+    if (text !== null) { try { config = JSON.parse(text); configFrom = ref; break; } catch { throw new LockerError("CONFIG", `${CONFIG} on ${ref} is not valid JSON`); } }
+  }
+  checkConfig(config, configFrom);
   return { config, configFrom };
 }
 
@@ -96,15 +104,22 @@ async function runGate(repo, head, actor) {
   await git(repo.top, ["worktree", "add", "--detach", "--quiet", dir, head]);
   try {
     return await new Promise((done) => {
-      const c = spawn(cmd, args, { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, SL_ACTOR: actor.name, SL_SESSION: actor.session, SL_GATE_COMMIT: head } });
-      let output = "", ended = false;
-      const t = setTimeout(() => { if (!ended) { output += `\n(gate killed after ${repo.config.accept.gateTimeoutSeconds} s)`; c.kill("SIGKILL"); } }, repo.config.accept.gateTimeoutSeconds * 1000);
+      // its own process group, so a timeout kills the gate and everything it started (a test runner's browsers), and settled on exit,
+      // not close, so a grandchild holding the pipes cannot keep accept waiting
+      const c = spawn(cmd, args, { cwd: dir, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, SL_ACTOR: actor.name, SL_SESSION: actor.session, SL_GATE_COMMIT: head } });
+      let output = "", settled = false;
+      const finish = (r) => { if (!settled) { settled = true; clearTimeout(t); done(r); } };
+      const killAll = () => { try { if (process.platform === "win32") spawn("taskkill", ["/T", "/F", "/PID", String(c.pid)], { stdio: "ignore" }); else process.kill(-c.pid, "SIGKILL"); } catch { try { c.kill("SIGKILL"); } catch { /* gone */ } } };
+      const t = setTimeout(() => { output += `\n(gate killed after ${repo.config.accept.gateTimeoutSeconds} s)`; killAll(); finish({ code: 124, output }); }, repo.config.accept.gateTimeoutSeconds * 1000);
       c.stdout.on("data", (d) => { output += d; }); c.stderr.on("data", (d) => { output += d; });
-      c.on("error", (e) => { ended = true; clearTimeout(t); done({ code: 127, output: output + String(e) }); });
-      c.on("close", (code) => { ended = true; clearTimeout(t); done({ code: code ?? 137, output }); });
+      c.on("error", (e) => finish({ code: 127, output: output + String(e) }));
+      c.on("exit", (code) => setTimeout(() => finish({ code: code ?? 137, output }), 50));   // a moment for the last output to arrive
     });
   } finally { await git(repo.top, ["worktree", "remove", "--force", dir], { allowFail: true }); }
 }
+
+/** Files that are never trailing, whatever the patterns say: the config, the records, the attributes, the workflows, the guard. */
+const NEVER_TRAILING = /^(locker\.json|locker\/.*|\.gitattributes|\.github\/.*|bin\/sl-guard\.js)$/;
 
 const ident = (actor) => ["-c", `user.name=${actor.name}`, "-c", `user.email=${actor.name}@simlocker.local`];
 const trailers = (fields) => Object.entries(fields).map(([k, v]) => `Locker-${k}: ${v}`).join("\n");
@@ -437,7 +452,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
     const z = (await git(repo.top, ["diff", "--name-status", "--no-renames", "-z", `${r.range.to}..${head}`])).split("\0").filter(Boolean);
     const since = []; for (let i = 0; i + 1 < z.length; i += 2) since.push({ st: z[i], file: z[i + 1] });
     const trailing = repo.config.accept.trailing.map(globToRegExp);
-    const outside = since.filter(({ st, file }) => !((st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(file)) || trailing.some((re) => re.test(file))));
+    const outside = since.filter(({ st, file }) => !((st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(file)) || (!NEVER_TRAILING.test(file) && trailing.some((re) => re.test(file)))));
     if (outside.length) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers up to ${String(r.range.to).slice(0, 7)} but ${slice} is now at ${head.slice(0, 7)} and changed ${outside.slice(0, 5).map((x) => `${x.st} ${x.file}`).join(", ")}; review the new commits`);
   }
   for (const [file, blob] of Object.entries(r.cited ?? {})) if ((await blobAt(repo.top, head, file)) !== blob) throw new LockerError("REVIEW_STALE", `review ${reviewId} cites ${file} at ${String(blob).slice(0, 7)} but the slice has a different version`);

@@ -319,7 +319,7 @@ test("accept.trailing lets a configured record file change after the review; acc
   const fcommit = execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@f", "commit-tree", tree, "-p", sh(A, "rev-parse", "origin/main"), "-m", "forged"], { cwd: A, encoding: "utf8" }).trim();
   sh(A, "update-ref", "refs/remotes/origin/main", fcommit);
   const repo3 = await L.openRepo(A); assert.equal(repo3.config.accept.gate, null, "the forged tracking ref is what openRepo sees");
-  await writeFile(join(A, "gate-block"), "");                                             // untracked, excluded from nothing: the gate must not see it
+  await writeFile(join(A, "gate-block"), "");                                             // untracked and excluded, so the tree stays clean: the gate must not see it
   await writeFile(join(A, ".git/info/exclude"), "gate-block\n");
   first = await L.accept(repo3, claude, { slice: "slice/gated", reviewId: rv2.id });
   assert.match(first.gate ?? "", /gate\.js will run/, "the real config, fetched from the remote, still has the gate");
@@ -328,4 +328,38 @@ test("accept.trailing lets a configured record file change after the review; acc
   assert.match(sh(A, "show", "main:ledger/rows.md"), /feature/);
   assert.throws(() => sh(A, "show", "main:gate-block"));
   await L.lease(repo3, claude, "release");
+});
+
+test("a gate that hangs is killed with everything it started, and protected files are never trailing whatever the pattern says", async () => {
+  const repo = await L.openRepo(A);
+  const claude = await L.actorFromEnv(repo, env("claude", "c1"));
+  const astra = await L.actorFromEnv(repo, env("astra", "a1"));
+  const rick = await L.actorFromEnv(repo, env("rick", "s1"));
+  sh(A, "checkout", "--quiet", "main");
+  const cfg = JSON.parse(await readFile(join(A, "locker.json"), "utf8"));
+  for (const bad of ["locker/reviews/rev_a*.json", "locker/live/live.json", ".github/workflows/guard-main.yml", "bin/sl-guard.js", "*.json", "locker/*.record.json"])
+    assert.throws(() => L.checkConfig({ ...cfg, accept: { trailing: [bad] } }), (e) => e.code === "CONFIG", bad);
+  for (const bad of [0, 1.5, 1e9, "9"]) assert.throws(() => L.checkConfig({ ...cfg, accept: { gateTimeoutSeconds: bad } }), (e) => e.code === "CONFIG", String(bad));
+  assert.equal(L.checkConfig({ ...cfg, accept: { trailing: ["**/rows.md", "vault/00 Start/Delivery ledger.md"] } }).accept.gateTimeoutSeconds, 900);
+  // a pattern that passes the load check (it starts with a glob) but reaches a protected file: the file is still refused at accept
+  cfg.accept = { gate: ["sh", "-c", "sleep 30; echo done"], gateTimeoutSeconds: 1, trailing: ["**/*.md", "**/guard-main.yml"] };
+  await writeFile(join(A, "locker.json"), JSON.stringify(cfg, null, 2) + "\n");
+  await mkdir(join(A, ".github/workflows"), { recursive: true }); await writeFile(join(A, ".github/workflows/guard-main.yml"), "on: push\n");
+  await L.save(repo, rick, { message: "slow gate, wide trailing" }); await L.backup(repo);
+  const repo2 = await L.openRepo(A);
+  await writeFile(join(A, "thing.txt"), "t\n"); await L.save(repo2, claude, { message: "thing", slice: "slice/slow" });
+  const rv = await L.review(repo2, astra, { from: "main", to: "slice/slow", verdict: "pass", findings: "ok" });
+  await writeFile(join(A, ".github/workflows/guard-main.yml"), "on: workflow_dispatch\n");     // matches **/guard-main.yml, but the workflow is protected
+  await L.save(repo2, claude, { message: "review and a workflow change" }); await L.backup(repo2); await L.lease(repo2, claude, "acquire");
+  await rejects(L.accept(repo2, claude, { slice: "slice/slow", reviewId: rv.id }), "REVIEW_STALE");
+  sh(A, "reset", "--quiet", "--hard", "HEAD^");
+  const rv2 = await L.review(repo2, astra, { from: "main", to: "slice/slow", verdict: "pass", findings: "ok" });
+  await writeFile(join(A, "notes.md"), "n\n");
+  await L.save(repo2, claude, { message: "review and a note" });
+  await rejects(L.backup(repo2), "PUSH_REFUSED");                                          // the slice diverged from its backed-up copy; the tool never forces
+  const first = await L.accept(repo2, claude, { slice: "slice/slow", reviewId: rv2.id });
+  const t0 = Date.now();
+  const g = await rejects(L.accept(repo2, claude, { slice: "slice/slow", reviewId: rv2.id, confirm: first.token }), "GATE_FAILED");
+  assert.match(g.message, /killed after 1 s/); assert.ok(Date.now() - t0 < 5000, `accept returned after ${Date.now() - t0} ms`);
+  await L.lease(repo2, claude, "release");
 });
