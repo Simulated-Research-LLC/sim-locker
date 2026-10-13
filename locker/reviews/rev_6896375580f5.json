@@ -1,0 +1,27 @@
+{
+ "id": "rev_6896375580f5",
+ "kind": "review",
+ "range": {
+  "from": "d0451d314d2791c4bbe9f36729bd615857ce29d3",
+  "to": "962ab153176b44337fc324205e5f8979912ff473"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "rev-1791901397",
+ "verdict": "pass",
+ "findings": "Rerun on 962ab15. npm test passes 17 of 17; npm run lines 865 (README says about 870); no em dashes in the diff. Item 3 holds: every pattern that loaded before is now refused by checkConfig (locker/reviews/rev_a*.json, rev_1*.json, locker/live/live.json, locker/*.record.json, .github/workflows/guard-main.yml, .github/workflows/*.yaml, bin/sl-guard.js), as are **, locker/**, *.json, .github/**, locker.json and .git*; **/rows.md still loads. Patterns that get past the load check still cannot reach a protected file: with **/guard-main.yml, */*/guard-main.yml and */*/rev_<id>.json loaded, a change after the review to the guard workflow and a rewrite of an accepted review record were both refused REVIEW_STALE by NEVER_TRAILING (src/locker.js:122, :455), while a ledger/*.md row after the review was accepted. Item 5 holds: with gateTimeoutSeconds 2, sleep 10, sh -c 'sleep 10; echo done' and node spawning sleep 10 each returned GATE_FAILED exit 124 'killed after 2 s' in 2.1 s, with the grandchild killed and the worktree removed (src/locker.js:110 to :116). Glob unchanged and right: v?.md matches only the literal v?.md, a.b only a.b, **/rows.md matches rows.md, ledger/rows.md and a/b/rows.md and not xrows.md. Should change, not blocking: the process group is killed only on timeout, so a gate that exits 0 leaves its background children running after accept; sh -c '(sleep 4; echo alive > file) & exit 0' was accepted and the child wrote the file 4 s later from a worktree that had been removed. Kill the group on exit too (:116). The 50 ms wait after exit can drop the last output of a busy gate from the GATE_FAILED message. Still noted from the last record, same class as raw git: a fetch url that differs from the push url lets accept read the config from one place and push to another.",
+ "cited": {
+  "AGENTS.md": "7dea298c7802f340037a35075d3d780d12b904dc",
+  "CLAUDE.md": "7dea298c7802f340037a35075d3d780d12b904dc",
+  "DESIGN.md": "a89c5d0708c9a64f6b130d274070c4aea4ded304",
+  "README.md": "f45af856e6ccd46ea09c106ea8936230da5b5d9a",
+  "locker/reviews/rev_4b1349d5b585.json": "e45ae2eae921fef9131e3d426906c221b6bb982f",
+  "locker/reviews/rev_78eb1358b585.json": "816d18d04533e50d479daf215a7d84133d65ed35",
+  "package-lock.json": "9271a77a246bcce55f03398a7e8696a7fb02666d",
+  "package.json": "2a61f30384116e688699f7f6f7de609397b64779",
+  "src/locker.js": "8fad997185a3fceee75e9f7179622bf8fd377a1a",
+  "src/mcp.js": "e0717529e6a5713b58fc00871077f8ba969e9d58",
+  "test/locker.test.js": "2c48b40ec6a9eb8422239629e572c2cb6484c65b"
+ },
+ "created": "2026-10-13T14:23:17.722Z"
+}

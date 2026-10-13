@@ -113,7 +113,7 @@ async function runGate(repo, head, actor) {
       const t = setTimeout(() => { output += `\n(gate killed after ${repo.config.accept.gateTimeoutSeconds} s)`; killAll(); finish({ code: 124, output }); }, repo.config.accept.gateTimeoutSeconds * 1000);
       c.stdout.on("data", (d) => { output += d; }); c.stderr.on("data", (d) => { output += d; });
       c.on("error", (e) => finish({ code: 127, output: output + String(e) }));
-      c.on("exit", (code) => setTimeout(() => finish({ code: code ?? 137, output }), 50));   // a moment for the last output to arrive
+      c.on("exit", (code) => { killAll(); setTimeout(() => finish({ code: code ?? 137, output }), 50); });   // its stragglers die with it; a moment for the last output
     });
   } finally { await git(repo.top, ["worktree", "remove", "--force", dir], { allowFail: true }); }
 }
