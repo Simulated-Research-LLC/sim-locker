@@ -8,7 +8,7 @@ Sim Locker is git plus a thin record layer. It promises:
 
 1. It refuses to work in a folder that is not a managed clone (`UNMANAGED`) or whose truth branch is behind the remote (`STALE`).
 2. Agents cannot write to the truth branch except through `accept`, which needs a review record of exactly the slice's range, the lease, a clean tree, and a two-step confirm token.
-3. One writer on the truth branch at a time: a lease in `refs/locker/lease` with a TTL, taken by compare-and-swap (`--force-with-lease`).
+3. One writer on the truth branch at a time: a lease in `refs/heads/locker/lease` with a TTL, taken by compare-and-swap (`--force-with-lease`).
 4. It never force-pushes anything else.
 5. "backed up" means fetched back and compared, not "push exited 0".
 6. Every record and every piece of state is a plain file or a git ref; a plain `git clone` without the tool has the whole project.
@@ -17,7 +17,7 @@ Sim Locker is git plus a thin record layer. It promises:
 ## Where to attack
 
 - `src/locker.js:accept`. Can a slice reach `main` without a passing review of its full range? Try: a review of an older head followed by a commit that touches `locker/reviews/` and something else in the same commit; a review whose `from` is not the merge base; a review record edited by hand after it was written; two slices with the same name; a slice branch that was rebased after the review.
-- The lease. Two processes acquiring at once against the same bare remote (write a shell loop). An expired lease taken while the old holder is mid-accept. A lease ref that exists on the remote but has never been fetched locally. A remote that rejects pushes to `refs/locker/*`.
+- The lease. Two processes acquiring at once against the same bare remote (write a shell loop). An expired lease taken while the old holder is mid-accept. A lease ref that exists on the remote but has never been fetched locally. A remote that rejects pushes to `refs/heads/locker/*`.
 - Staleness. `freshen` trusts the mtime of `FETCH_HEAD`. What happens when a different tool fetched a different remote? When the clock is wrong? When `maxAgeSeconds` is set to a huge value?
 - The confirm token. It lives in `.git/locker-confirm.json`. Is a token from one clone usable in another? From one operation on another with the same arguments?
 - `TWO CLONES`. The registry is `~/.simlocker/clones.json`. A clone made with plain `git clone` is not in it. Is that a hole the tool should close, or acceptable because the unregistered clone is `UNMANAGED` until `sl init`?

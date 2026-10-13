@@ -1,0 +1,28 @@
+{
+ "id": "rev_70ab7a8bc714",
+ "kind": "review",
+ "range": {
+  "from": "a8e6995063044988f34635522cba1e73b360595a",
+  "to": "1dd28c6b78a91117979491d7281a1cf06ac795d9"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "fix",
+ "findings": "npm test passes 15 of 15. The three earlier items are fixed: bin/sl-guard.js stands alone, the entry check at bin/sl-guard.js:46 uses resolve and fileURLToPath, the actor list comes from before:locker.json at bin/sl-guard.js:27-28 and the self-promotion test proves it, the workflow header at guard-main.yml:1-5 and README.md:58 now say what the guard checks and what it misses, and ASTRA_BRIEF.md:20 says refs/heads/locker/*. One thing must change before main: the push that lands this slice will fail the guard. main today (a8e6995) has no locker.json, so bin/sl-guard.js:30 adds NO CONFIG to problems and the run goes red and opens an issue even though every commit carries a Locker-Actor trailer. I ran node bin/sl-guard.js main slice/self-managed-and-guard and got exit 1 with only that problem. The same happens in any project adopting the guard before its locker.json is on main, and FIRST PUSH at bin/sl-guard.js:32 also always fails. Fix: a missing locker.json at before should leave the human list empty and print a note, not fail on its own, so only a commit with no trailer fails; the same for FIRST PUSH unless the intent is that a first push always fails, in which case say so in README.md:58. Minor, not blocking: test/locker.test.js:270-271 resets to main~2 and then to main^, which removes one commit too many; harmless only because it is the last test. test/locker.test.js:265 uses URL pathname, which breaks on a path with spaces or on Windows; use fileURLToPath. bin/sl-guard.js:17 pipes stderr and never reads it; use ignore. bin/sl-guard.js:46 still exits 0 silently when run through a symlink, which the workflow does not do.",
+ "cited": {
+  ".gitattributes": "6dac554badde18e51dd48240e2d41d894b0119ee",
+  ".github/workflows/guard-main.yml": "2b219380b8d8fcb5fd46c260f89acf744b1e02f8",
+  "AGENTS.md": "d656ec1b2d052061238a3f39a194dad559f6887e",
+  "ASTRA_BRIEF.md": "cad850f1cefc449f71d127039790256df2309608",
+  "CLAUDE.md": "d656ec1b2d052061238a3f39a194dad559f6887e",
+  "DESIGN.md": "60b73015a5e54df15032b2dc235d2e21c8aef4d1",
+  "README.md": "b2256b8cbfbec10434486ab6873132aab1af70aa",
+  "bin/sl-guard.js": "1006a352a99fac308bbc8515bb36980a7349fc03",
+  "locker.json": "f84efba874a38ffe5d7de8d4790c30fe2894cc2f",
+  "locker/reviews/rev_0d06405c214e.json": "1489cf106daac1cdb3ba8a29615ea082658e433d",
+  "src/locker.js": "4334fef5e2570ad703920797914ecb6af0bf5d67",
+  "test/locker.test.js": "6fbff7ca2d415df7d08e3747cca450b3b9f7777c"
+ },
+ "created": "2026-10-13T03:36:15.448Z"
+}
