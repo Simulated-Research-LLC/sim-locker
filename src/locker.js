@@ -429,8 +429,18 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   const f = await freshen(repo, { force: true });
   if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${remote}; accepting needs the remote`);
   // the config that rules is the one on the remote truth branch as just fetched, not whatever the local tracking ref said when the repo was opened
-  const fresh = await loadConfig(repo.top, repo.config);
-  if (fresh.configFrom !== `${remote}/${truth}`) throw new LockerError("CONFIG", `${CONFIG} is not on ${remote}/${truth}; back the truth branch up before accepting`);
+  let fresh = await loadConfig(repo.top, repo.config), bootstrap = false;
+  if (fresh.configFrom !== `${remote}/${truth}`) {
+    // bootstrap: the project has never had locker.json on its truth branch, and this very slice brings it. The slice's own config rules
+    // this one acceptance (it still needs the lease, a review by another actor and the confirm); afterwards the remote's copy rules.
+    checkSliceName(repo, slice);
+    const sliceHead = await revParse(repo.top, `refs/heads/${slice}`);
+    const onRemote = await git(repo.top, ["show", `${remote}/${truth}:${CONFIG}`], { allowFail: true });
+    const onSlice = sliceHead ? await git(repo.top, ["show", `${sliceHead}:${CONFIG}`], { allowFail: true }) : null;
+    if (onRemote !== null || onSlice === null) throw new LockerError("CONFIG", `${CONFIG} is not on ${remote}/${truth}; back the truth branch up before accepting`);
+    let cfg; try { cfg = JSON.parse(onSlice); } catch { throw new LockerError("CONFIG", `${CONFIG} in ${slice} is not valid JSON`); }
+    fresh = { config: checkConfig(cfg, `${slice} (bootstrap)`), configFrom: `${slice} (bootstrap)` }; bootstrap = true;
+  }
   repo = { ...repo, config: fresh.config, configFrom: fresh.configFrom };
   if (!(actor.name in repo.config.actors)) throw new LockerError("NO_ACTOR", `${actor.name} is not an actor in ${CONFIG} on ${remote}/${truth}`);
   const t = await truthState(repo);
@@ -459,7 +469,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   if (r.verdict !== "pass") throw new LockerError("REVIEW_BLOCKS", `review ${reviewId} says ${r.verdict}: ${String(r.findings).slice(0, 200)}`);
   const commits = await range(repo.top, base, head);
   const pending = await requireConfirm(repo, actor, "accept", { slice, head, reviewId }, confirm);
-  if (pending) return { ...pending, slice, head, commits: commits.length, review: reviewId, gate: repo.config.accept.gate ? `${repo.config.accept.gate.join(" ")} will run on ${head.slice(0, 7)} at the confirm step` : null };
+  if (pending) return { ...pending, slice, head, commits: commits.length, review: reviewId, ...(bootstrap ? { bootstrap: true } : {}), gate: repo.config.accept.gate ? `${repo.config.accept.gate.join(" ")} will run on ${head.slice(0, 7)} at the confirm step` : null };
   if (repo.config.accept.gate) {
     const gate = await runGate(repo, head, actor);
     if (gate.code !== 0) throw new LockerError("GATE_FAILED", `the project's own gate refused (${repo.config.accept.gate.join(" ")} on ${head.slice(0, 7)}, exit ${gate.code}):\n${gate.output.trim().split("\n").slice(-12).join("\n")}`, { output: gate.output });
@@ -482,7 +492,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
     await freshen(repo, { force: true });
     await git(repo.top, ["branch", "-m", slice, `done/${slice}`]);
     const kept = await git(repo.top, ["push", "--quiet", remote, `done/${slice}:refs/heads/done/${slice}`], { allowFail: true });
-    return { accepted: true, merge, slice, keptAs: `done/${slice}`, keptOnRemote: kept !== null, commits: commits.length, review: reviewId };
+    return { accepted: true, merge, slice, keptAs: `done/${slice}`, keptOnRemote: kept !== null, commits: commits.length, review: reviewId, ...(bootstrap ? { bootstrap: `${CONFIG} was not on ${remote}/${truth}; this slice's copy ruled this acceptance and is now on the truth branch` } : {}) };
   } finally {
     if (was !== slice && was !== truth) await git(repo.top, ["checkout", "--quiet", was], { allowFail: true });
   }

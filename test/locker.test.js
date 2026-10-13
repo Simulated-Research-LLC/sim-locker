@@ -363,3 +363,24 @@ test("a gate that hangs is killed with everything it started, and protected file
   assert.match(g.message, /killed after 1 s/); assert.ok(Date.now() - t0 < 5000, `accept returned after ${Date.now() - t0} ms`);
   await L.lease(repo2, claude, "release");
 });
+
+test("bootstrap: a project whose truth branch has no locker.json yet accepts the slice that brings it, once", async () => {
+  const R2 = join(tmp, "remote2.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", R2);
+  const C = join(tmp, "C"); sh(tmp, "clone", "--quiet", R2, C); sh(C, "checkout", "--quiet", "-b", "main");
+  await writeFile(join(C, "README.md"), "# fresh\n"); sh(C, "add", "-A"); sh(C, "commit", "--quiet", "-m", "first"); sh(C, "push", "--quiet", "-u", "origin", "main");
+  await L.init(C, { project: "fresh" });                                   // writes locker.json in the working tree only
+  const repo = await L.openRepo(C); assert.equal(repo.configFrom, "working tree");
+  const claude = await L.actorFromEnv(repo, env("claude", "c9")), astra = await L.actorFromEnv(repo, env("astra", "a9"));
+  await writeFile(join(C, "thing.txt"), "t\n");
+  await L.save(repo, claude, { message: "manage with sim locker", slice: "slice/manage" });
+  const rv = await L.review(repo, astra, { from: "main", to: "slice/manage", verdict: "pass", findings: "ok" });
+  await L.save(repo, claude, { message: "review" }); await L.backup(repo); await L.lease(repo, claude, "acquire");
+  const first = await L.accept(repo, claude, { slice: "slice/manage", reviewId: rv.id });
+  assert.equal(first.bootstrap, true);
+  const done = await L.accept(repo, claude, { slice: "slice/manage", reviewId: rv.id, confirm: first.token });
+  assert.equal(done.accepted, true); assert.match(done.bootstrap, /was not on origin\/main/);
+  assert.ok(sh(C, "show", "origin/main:locker.json"));
+  await L.lease(repo, claude, "release");
+  // from now on the remote's copy rules: a slice that changes locker.json does not get its own copy used
+  const repo2 = await L.openRepo(C); assert.equal(repo2.configFrom, "origin/main");
+});
