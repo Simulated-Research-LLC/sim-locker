@@ -1,0 +1,25 @@
+{
+  "project": "sim-locker",
+  "truth": "main",
+  "remote": "origin",
+  "actors": {
+    "rick": "human",
+    "claude": "agent",
+    "reviewer": "agent",
+    "astra": "agent",
+    "percept": "model"
+  },
+  "lease": {
+    "ttlMinutes": 30
+  },
+  "fetch": {
+    "maxAgeSeconds": 300
+  },
+  "live": {
+    "kind": "none"
+  },
+  "confirm": [
+    "accept",
+    "revert"
+  ]
+}

@@ -8,7 +8,7 @@ Sim Locker is git plus a thin record layer. It promises:
 
 1. It refuses to work in a folder that is not a managed clone (`UNMANAGED`) or whose truth branch is behind the remote (`STALE`).
 2. Agents cannot write to the truth branch except through `accept`, which needs a review record of exactly the slice's range, the lease, a clean tree, and a two-step confirm token.
-3. One writer on the truth branch at a time: a lease in `refs/locker/lease` with a TTL, taken by compare-and-swap (`--force-with-lease`).
+3. One writer on the truth branch at a time: a lease in `refs/heads/locker/lease` with a TTL, taken by compare-and-swap (`--force-with-lease`).
 4. It never force-pushes anything else.
 5. "backed up" means fetched back and compared, not "push exited 0".
 6. Every record and every piece of state is a plain file or a git ref; a plain `git clone` without the tool has the whole project.

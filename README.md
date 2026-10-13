@@ -53,7 +53,11 @@ If you set `SL_SESSION` yourself, keep it the same for all the calls of one sess
 
 ## What this does and does not enforce
 
-The rules are enforced in the tool: on the honest path an agent cannot reach `main` except through `accept`, and every attack the review found (`docs/review-0.1.md`) is now refused with a test. But nothing here runs on GitHub. An agent that sets `SL_ACTOR=rick`, or uses raw `git push`, is stopped only by branch protection on the repo (require a pull request or restrict who can push to `main`). Turn that on for any project where it matters. Sim Locker makes the honest path easy and the dishonest path visible; it does not make it impossible.
+The rules are enforced in the tool: on the honest path an agent cannot reach `main` except through `accept`, and every attack the review found (`docs/review-0.1.md`) is now refused with a test. But nothing here runs on GitHub. An agent that sets `SL_ACTOR=rick`, or uses raw `git push`, is stopped only by branch protection on the repo (require a pull request or restrict who can push to `main`). Turn that on for any project where it matters (on a private repo under a personal account that needs GitHub Pro). Sim Locker makes the honest path easy and the dishonest path visible; it does not make it impossible.
+
+Until branch protection is on, the repo carries a tripwire: `.github/workflows/guard-main.yml` runs `bin/sl-guard.js` on every push to `main`. It fails the run and opens an issue when the push was forced, or when any new commit on `main` has no `Locker-Actor` trailer and was not written by a configured human actor. It cannot undo the push; it makes sure nobody misses it. Install the same two files in any project that uses Sim Locker.
+
+The lease lives on the branch `locker/lease`, not a custom ref, because some proxies and server hooks allow pushes only under `refs/heads/`. It is the one branch the tool pushes with `--force-with-lease`, and it holds one small JSON file.
 
 ## What it refuses, and why
 
@@ -95,7 +99,7 @@ Claude Code config, for example:
 
 ## What is tested
 
-`npm test` runs 14 tests against real git: a bare remote standing in for GitHub and two clones standing in for two machines. Asserted: UNMANAGED for a plain folder and an unmanaged clone; NO_ACTOR; one session per clone; a human saving and backing up on `main` with the trailers present; AGENT_ON_TRUTH for save and revert; saved, backed up and accepted detection in `status`; TWO CLONES when a second clone opens, cleared when it is gone; STALE after another clone moves `main`, `save` refused, cleared by `pull`; the lease held, not releasable or renewable by others, taken when expired; accept refused for NO_LEASE, NO_REVIEW, REVIEW_STALE (new commit; a file renamed into `locker/reviews/`), REVIEW_BLOCKS, REVIEW_SELF, DIRTY, BAD_SLICE (`HEAD`, `refs/heads/main`, `main`), BAD_CONFIRM, NAME_TAKEN; the working-tree `locker.json` not changing an actor's kind; the first accept step moving nothing and the second moving `main` on the remote with the trailers, keeping `done/<slice>` locally and on the remote; stale reviews cleared by the accept; NOT_BACKED_UP when the remote cannot be asked; the two-step revert; a plain `git clone` holding `locker.json` and the review records; the merge driver through `.gitattributes`, both a hand-installed one and the one `init` installs with PATH stripped; `status --no-fetch` saying NOT FETCHED.
+`npm test` runs 15 tests against real git: a bare remote standing in for GitHub and two clones standing in for two machines. Asserted: UNMANAGED for a plain folder and an unmanaged clone; NO_ACTOR; one session per clone; a human saving and backing up on `main` with the trailers present; AGENT_ON_TRUTH for save and revert; saved, backed up and accepted detection in `status`; TWO CLONES when a second clone opens, cleared when it is gone; STALE after another clone moves `main`, `save` refused, cleared by `pull`; the lease held, not releasable or renewable by others, taken when expired; accept refused for NO_LEASE, NO_REVIEW, REVIEW_STALE (new commit; a file renamed into `locker/reviews/`), REVIEW_BLOCKS, REVIEW_SELF, DIRTY, BAD_SLICE (`HEAD`, `refs/heads/main`, `main`), BAD_CONFIRM, NAME_TAKEN; the working-tree `locker.json` not changing an actor's kind; the first accept step moving nothing and the second moving `main` on the remote with the trailers, keeping `done/<slice>` locally and on the remote; stale reviews cleared by the accept; NOT_BACKED_UP when the remote cannot be asked; the two-step revert; a plain `git clone` holding `locker.json` and the review records; the merge driver through `.gitattributes`, both a hand-installed one and the one `init` installs with PATH stripped; `status --no-fetch` saying NOT FETCHED; the guard passing tool and human commits and failing a raw commit and a forced push.
 
 Not in the suite: two actors racing for the lease in the same instant (held up under six racing clones in the review, `docs/review-0.1.md`), REVIEW_RANGE, PUSH_REFUSED, DIVERGED, LEASE_RACE, LEASE_NOT_MINE.
 
@@ -104,6 +108,8 @@ Not in the suite: two actors racing for the lease in the same instant (held up u
 ```
 bin/sl.js            the command line
 bin/sl-mcp.js        the MCP server
+bin/sl-guard.js      the tripwire GitHub Actions runs on every push to main
+.github/workflows/guard-main.yml   the workflow that runs it
 src/locker.js        the four states, the rules, the records
 src/git.js           a thin wrapper around the git executable
 src/merge-record.js  the per-key merge driver
@@ -116,4 +122,4 @@ docs/reading-rea-and-ghidra.md   what was read before the design, with file:line
 ASTRA_BRIEF.md       the brief for the adversarial review by Codex (Astra) and the adoption steps
 ```
 
-About 740 lines of JavaScript, two dependencies (the MCP SDK and zod).
+About 790 lines of JavaScript, two dependencies (the MCP SDK and zod).

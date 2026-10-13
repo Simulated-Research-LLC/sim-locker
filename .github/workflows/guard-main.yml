@@ -1,0 +1,36 @@
+# The tripwire for the truth branch. Runs on every push to main. It cannot refuse a push (that needs branch protection, which
+# needs GitHub Pro on a private personal repo and cannot be set from the cloud session); it makes a bad push fail loudly and
+# opens an issue, so a forced push or a commit that bypassed Sim Locker is never silent.
+name: guard main
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  issues: write
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: check every new commit on main
+        id: guard
+        shell: bash
+        run: |
+          set +e
+          node bin/sl-guard.js "${{ github.event.before }}" "${{ github.sha }}" ${{ github.event.forced && '--forced' || '' }} | tee guard.txt
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+      - name: open an issue when the guard fails
+        if: steps.guard.outputs.code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --title "guard main: bad push ${GITHUB_SHA::7} by ${{ github.actor }}" --body-file guard.txt --label guard || gh issue create --title "guard main: bad push ${GITHUB_SHA::7} by ${{ github.actor }}" --body-file guard.txt
+      - name: fail the run when the guard fails
+        if: steps.guard.outputs.code != '0'
+        run: exit 1

@@ -1,0 +1,2 @@
+*.record.json merge=locker-record
+locker/**/*.json merge=locker-record

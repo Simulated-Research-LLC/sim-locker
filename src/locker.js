@@ -17,7 +17,8 @@ export class LockerError extends Error {
 }
 
 const CONFIG = "locker.json";
-const LEASE_REF = "refs/locker/lease";
+// The lease lives on a branch, not a custom ref: GitHub proxies and hooks that allow only refs/heads/* still carry it.
+const LEASE_REF = "refs/heads/locker/lease";
 const CONFIRM_TTL_MS = 10 * 60 * 1000;
 const REGISTRY = join(homedir(), ".simlocker", "clones.json");
 const SLICE_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
@@ -290,7 +291,7 @@ export async function status(repo, { fetch = true } = {}) {
   const others = await otherClones(repo);
   if (others.length) problems.push(`TWO CLONES: this project is also cloned at ${others.join(", ")}; one machine, one clone`);
   const { lease: cur, corrupt } = await readLease(repo);
-  if (corrupt) problems.push("LEASE CORRUPT: refs/locker/lease does not hold valid JSON");
+  if (corrupt) problems.push("LEASE CORRUPT: refs/heads/locker/lease does not hold valid JSON");
   if (cur?.owner && !cur.expired) problems.push(`LEASE HELD BY ${cur.owner} (${cur.kind}, session ${cur.session}) until ${cur.expires}`);
   const stale = await staleReviews(repo);
   for (const s of stale) problems.push(`STALE REVIEW ${s.id}: ${s.moved.length} cited file(s) changed since: ${s.moved.slice(0, 5).join(", ")}${s.moved.length > 5 ? ", ..." : ""}`);

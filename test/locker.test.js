@@ -95,7 +95,7 @@ test("the lease: one holder, no release by others, taken when expired", async ()
   const astra = await L.actorFromEnv(repo, env("astra", "a1"));
   const got = await L.lease(repo, claude, "acquire");
   assert.equal(got.action, "acquired"); assert.equal(got.lease.owner, "claude");
-  assert.equal(sh(A, "rev-parse", "refs/locker/lease"), sh(A, "--git-dir", remote, "rev-parse", "refs/locker/lease"));
+  assert.equal(sh(A, "rev-parse", "refs/heads/locker/lease"), sh(A, "--git-dir", remote, "rev-parse", "refs/heads/locker/lease"));
   await rejects(L.lease(repo, astra, "acquire"), "LEASE_HELD");
   await rejects(L.lease(repo, astra, "release"), "LEASE_HELD");
   await rejects(L.lease(repo, astra, "renew"), "LEASE_HELD");
@@ -236,4 +236,21 @@ test("the merge driver that init installs works without sl on PATH, and status -
   sh(A, "reset", "--quiet", "--hard", "origin/main"); sh(A, "branch", "-q", "-D", "side");
   const st = await L.status(repo, { fetch: false });
   assert.ok(st.problems.some((p) => p.startsWith("NOT FETCHED")), st.problems.join("|"));
+});
+
+test("the guard passes commits made through the tool or by a human and fails raw pushes and forced pushes", async () => {
+  const { guard } = await import("../bin/sl-guard.js");
+  const first = sh(A, "rev-list", "--max-parents=0", "main");
+  const all = await guard(A, { before: first, after: "main" });
+  // one raw commit is on main from the staleness test above ("B moves main", by plain git as "t"); the guard must name exactly that one
+  assert.equal(all.problems.length, 1, all.problems.join("|")); assert.match(all.problems[0], /^RAW PUSH .* by "t".*B moves main/);
+  assert.ok(all.commits.filter((c) => c.ok).length >= 3, "the rick save, the accept and the revert pass");
+  sh(A, "checkout", "--quiet", "main");
+  await writeFile(join(A, "raw.txt"), "raw\n");
+  sh(A, "add", "raw.txt"); execFileSync("git", ["-c", "user.name=mallory", "-c", "user.email=m@m", "commit", "-qm", "raw push"], { cwd: A });
+  const raw = await guard(A, { before: "main^", after: "main" });
+  assert.equal(raw.ok, false); assert.ok(raw.problems.some((p) => p.startsWith("RAW PUSH")), raw.problems.join("|"));
+  const forced = await guard(A, { before: "main^", after: "main^", forced: true });
+  assert.ok(forced.problems.some((p) => p.startsWith("FORCED PUSH")));
+  sh(A, "reset", "--quiet", "--hard", "main^");
 });
