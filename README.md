@@ -68,7 +68,7 @@ The lease lives on the branch `locker/lease`, not a custom ref, because some pro
 | `UNMANAGED` | not a git clone, or no `locker.json`. Sim Locker will not work in a loose folder. This is the 0.41.2 folder sitting beside a 0.41.6 repo, made impossible |
 | `CONFIG FROM WORKING TREE` (status) | `locker.json` is not on the remote `main` yet, so the actors are not settled; save and back it up |
 | `BAD_SLICE` | a slice name must look like `slice/boss-hp`: no `HEAD`, `refs/`, `main`, `done/`, or `..` |
-| `STALE` | `main` here is behind the remote. `sl pull` first. `save` and `accept` refuse until then |
+| `STALE` | `main` here is behind the remote. `sl pull` first. A save on `main` itself and `accept` refuse until then; a save on a slice goes ahead, and a new slice starts from the remote's `main`, so it is never behind |
 | `NOT FETCHED` | it could not reach the remote, so ahead/behind may be wrong. Said on the first line, never hidden |
 | `TWO CLONES` | the same project is cloned twice on this machine. One machine, one clone |
 | `AGENT_ON_TRUTH` | an agent tried to save on `main`. Agents save on slice branches; `accept` is how work reaches `main` |

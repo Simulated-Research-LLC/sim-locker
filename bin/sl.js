@@ -23,6 +23,7 @@ const COMMANDS = {
   drill: { group: "the drill", usage: "sl drill [--keep] [--dir <d>] [-- <test command...>]", what: "restore drill: the truth branch to a fresh bare repo, cloned back with plain git, the tests run there", options: ["--keep       keep the two folders to look at", "--dir <d>    put them in this new or empty folder", "-- <cmd...>  another test command this once"], example: "sl drill -- node --test" },
   init: { group: "setup", usage: "sl init [--project <name>] [--truth main] [--remote origin]", what: "make this clone managed: writes locker.json and says what to do next", options: ["--project <name>  the project name (default: the folder name)", "--truth <branch>  the truth branch (default main)", "--remote <name>   the remote (default origin)"], example: "sl init --project old-winds" },
   clone: { group: "setup", usage: "sl clone <url> [dir]", what: "clone and make it managed in one step", options: ["--project, --truth, --remote  as for sl init"], example: "sl clone https://github.com/simulated-research/old-winds" },
+  "merge-record": { group: "setup", usage: "sl merge-record %O %A %B %P", what: "the git merge driver for record files; init installs it, git calls it", options: [], example: "(installed by sl init; not run by hand)" },
   help: { group: "setup", usage: "sl help [command]", what: "this list, or one command's options and an example (also sl <command> --help)", options: [], example: "sl help save" },
 };
 const GROUPS = ["where you stand", "saved", "backed up", "accepted", "live", "the drill", "setup"];

@@ -78,13 +78,15 @@ test("a second clone is reported, and a truth branch that moved makes the first 
   // status fetched within maxAge? force a fresh look
   await L.freshen(repoA, { force: true }); st = await L.status(repoA);
   assert.ok(st.problems.some((p) => p.startsWith("STALE")), st.problems.join("|"));
-  const claude = await L.actorFromEnv(repoA, env("claude", "c1"));
-  await writeFile(join(A, "game.js"), "export const v = 2;\n");
-  await rejects(L.save(repoA, claude, { message: "while stale" }), "STALE");
+  const claude = await L.actorFromEnv(repoA, env("claude", "c1")), rick = await L.actorFromEnv(repoA, env("rick", "r1"));
+  sh(A, "checkout", "--quiet", "main");
+  await rejects(L.save(repoA, rick, { message: "while stale, on main" }), "STALE");   // a save on the stale truth branch itself is refused
   await L.pull(repoA);
   st = await L.status(repoA);
   assert.ok(!st.problems.some((p) => p.startsWith("STALE")));
   assert.equal(sh(A, "rev-parse", "main"), sh(A, "rev-parse", "origin/main"));
+  sh(A, "checkout", "--quiet", "slice/bump");
+  await writeFile(join(A, "game.js"), "export const v = 2;\n");
   await L.save(repoA, claude, { message: "v2" });
   await rm(join(tmp, "B"), { recursive: true });                            // B is gone; the registry entry must not count
   st = await L.status(repoA); assert.ok(!st.problems.some((p) => p.startsWith("TWO CLONES")));
@@ -498,13 +500,18 @@ test("status and refusals say what to do next, in the output and in --json alike
   await L.freshen(repo, { force: true }); st = await L.status(repo);
   assert.deepEqual(st.next.find((n) => n.code === "STALE"), { code: "STALE", fix: "sl pull" });
   p = run(C, { SL_ACTOR: "rick" }, "status", "--no-fetch"); assert.equal(p.status, 2);
-  assert.match(p.stdout, /PROBLEM  NOT FETCHED.*\n   next  sl status \(without --no-fetch\)\n/); assert.match(p.stdout, /PROBLEM  STALE.*\n   next  sl pull\n/);
+  assert.match(p.stdout, /PROBLEM  NOT FETCHED.*\n   next  sl status without --no-fetch \(over MCP: status with fetch true\)\n/); assert.match(p.stdout, /PROBLEM  STALE.*\n   next  sl pull\n/);
   j = JSON.parse(run(C, {}, "status", "--no-fetch", "--json").stdout); assert.ok(j.next.some((n) => n.code === "STALE" && n.fix === "sl pull"));
   // refusals: one sentence, then the next command, the same in --json
-  await writeFile(join(C, "x.js"), "2\n");
-  p = run(C, { SL_ACTOR: "claude" }, "save", "-m", "y"); assert.equal(p.status, 1); assert.match(p.stderr, /^STALE: main here is 1 commit\(s\) behind the remote\n  next: sl pull\n$/);
-  j = JSON.parse(run(C, { SL_ACTOR: "claude" }, "save", "-m", "y", "--json").stdout); assert.equal(j.code, "STALE"); assert.equal(j.next, "sl pull"); assert.equal(j.details.next, "sl pull");
+  sh(C, "checkout", "--quiet", "main"); await writeFile(join(C, "x.js"), "2\n");
+  p = run(C, { SL_ACTOR: "rick" }, "save", "-m", "y"); assert.equal(p.status, 1); assert.match(p.stderr, /^STALE: main here is 1 save\(s\) behind the remote\n  next: sl pull\n$/);
+  j = JSON.parse(run(C, { SL_ACTOR: "rick" }, "save", "-m", "y", "--json").stdout); assert.equal(j.code, "STALE"); assert.equal(j.next, "sl pull"); assert.equal(j.details.next, "sl pull");
   p = run(C, {}, "save", "-m", "y"); assert.match(p.stderr, /^NO_ACTOR: .*\n  next: export SL_ACTOR=<name>\n$/);
+  // the way out of a stale truth branch with unsaved work: a new slice, started from the remote's main, and the step line says pull first
+  assert.match(run(C, { SL_ACTOR: "rick" }, "status", "--no-fetch").stdout, /next       main is behind: sl pull first\n/);
+  j = JSON.parse(run(C, { SL_ACTOR: "claude" }, "save", "-m", "y", "--slice", "slice/out", "--json").stdout); assert.equal(j.saved, true); assert.equal(j.branch, "slice/out");
+  assert.equal(sh(C, "rev-parse", "slice/out~1"), sh(C, "rev-parse", "origin/main"), "the slice starts from the remote's main, not the stale local one");
+  sh(C, "checkout", "--quiet", "--detach"); assert.match(run(C, {}, "status", "--no-fetch").stdout, /next       not on a branch: sl save .* --slice <name>/); sh(C, "checkout", "--quiet", "slice/x");
   await rejects(L.lease(repo, claude, "acquire"), "LEASE_HELD").then((e) => { assert.match(e.message, /for another (29|30) min/); assert.match(e.next, /sl lease release/); });
   // help: grouped by the four words, and one command's options with an example
   p = run(C, {}, "--help"); assert.equal(p.status, 0);

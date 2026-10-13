@@ -354,9 +354,9 @@ export async function status(repo, { fetch = true } = {}) {
   const problem = (code, text, fix) => { problems.push(text); next.push({ code, fix }); };
   const humans = Object.entries(repo.config.actors).filter(([, k]) => k === "human").map(([n]) => n).join(" or ") || "<a human actor>";
   const freshness = fetch ? await freshen(repo) : { fetched: false, fresh: false, reason: "fetch skipped by request", ageSeconds: await lastFetchAge(repo).then((a) => (a === null ? null : Math.round(a))) };
-  if (!freshness.fresh) problem("NOT FETCHED", `NOT FETCHED: ${freshness.reason}; everything below about the remote and the lease may be out of date`, fetch ? `check the connection to ${repo.remoteUrl}, then sl status again` : "sl status (without --no-fetch)");
+  if (!freshness.fresh) problem("NOT FETCHED", `NOT FETCHED: ${freshness.reason}; everything below about the remote and the lease may be out of date`, fetch ? `check the connection to ${repo.remoteUrl}, then sl status again` : "sl status without --no-fetch (over MCP: status with fetch true)");
   const truth = await truthState(repo);
-  if (truth.stale) problem("STALE", `STALE: ${truthName} is ${truth.behind} commit(s) behind ${remoteName}/${truthName}; pull before saving or accepting`, "sl pull");
+  if (truth.stale) problem("STALE", `STALE: ${truthName} is ${truth.behind} save(s) behind ${remoteName}/${truthName}; pull before saving on it or accepting`, "sl pull");
   if (!truth.remote) problem("NO REMOTE TRUTH", `NO REMOTE TRUTH: ${remoteName}/${truthName} does not exist; nothing has ever been backed up`, `on ${truthName}, as ${humans}: sl backup`);
   if (repo.configFrom === "working tree") problem("CONFIG FROM WORKING TREE", `CONFIG FROM WORKING TREE: ${CONFIG} is not on ${truthName} yet; save and back it up`, `as ${humans}, on ${truthName}: sl save -m "manage with sim locker" ${CONFIG} .gitattributes, then sl backup`);
   const others = await otherClones(repo);
@@ -377,7 +377,9 @@ export async function status(repo, { fetch = true } = {}) {
   const reviewedHead = lastFiles.length && lastFiles.every((f) => f.startsWith("locker/reviews/")) ? await revParse(repo.top, "HEAD~1") : slice.head;
   const onTruth = branch === truthName, passed = reviews.find((r) => (r.to === slice.head || r.to === reviewedHead) && r.verdict === "pass");
   let step;
-  if (dirty.length) step = `${dirty.length} file(s) not saved: sl save -m "<what and why>"${onTruth ? ` --slice <name> (only ${humans} saves on ${truthName} itself)` : ""}`;
+  if (branch === "HEAD") step = `not on a branch: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName})`;
+  else if (onTruth && truth.stale) step = `${truthName} is behind: sl pull first`;
+  else if (dirty.length) step = `${dirty.length} file(s) not saved: sl save -m "<what and why>"${onTruth ? ` --slice <name> (only ${humans} saves on ${truthName} itself)` : ""}`;
   else if (!slice.backedUp) step = `saved, not backed up: sl backup`;
   else if (onTruth) step = slice.live.applies && slice.live.commit !== slice.head ? `${truthName} is backed up; when this version is what people use: sl live ${slice.head.slice(0, 7)}` : `nothing waiting; ${truthName} is backed up`;
   else if (slice.accepted) step = `accepted as ${slice.accepted.slice(0, 7)} on ${truthName}; nothing waiting on this slice`;
@@ -392,12 +394,13 @@ export async function save(repo, actor, { message, paths = [], slice } = {}) {
   if (!message) throw new LockerError("NO_MESSAGE", "save needs a message that says what changed and why", { next: `sl save -m "<what and why>"` });
   const f = await freshen(repo);
   const truth = await truthState(repo);
-  if (truth.stale) throw new LockerError("STALE", `${repo.config.truth} here is ${truth.behind} commit(s) behind the remote`, { next: "sl pull" });
   const before = await currentBranch(repo.top);
   if (slice !== undefined) checkSliceName(repo, slice);
+  // a stale truth branch refuses a save on itself; a slice is its own line, and a new one starts from the remote's truth, so it is never stale
+  if (truth.stale && (slice ?? before) === repo.config.truth) throw new LockerError("STALE", `${repo.config.truth} here is ${truth.behind} save(s) behind the remote`, { next: "sl pull" });
   if (slice && slice !== before) {
     const exists = await revParse(repo.top, `refs/heads/${slice}`);
-    await git(repo.top, exists ? ["checkout", "--quiet", slice] : ["checkout", "--quiet", "-b", slice, repo.config.truth]);
+    await git(repo.top, exists ? ["checkout", "--quiet", slice] : ["checkout", "--quiet", "-b", slice, truth.remote ?? repo.config.truth]);
   }
   const branch = await currentBranch(repo.top);                       // what git says, not what the caller said
   if (branch === "HEAD") throw new LockerError("DETACHED", "this folder is not on a branch, so there is nowhere to save to", { next: `sl save -m "<what and why>" --slice <name>` });
