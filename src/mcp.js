@@ -6,21 +6,22 @@ import { z } from "zod";
 import * as L from "./locker.js";
 
 export function buildServer(cwd = process.cwd()) {
-  const server = new McpServer({ name: "sim-locker", version: "0.2.2" });
+  const server = new McpServer({ name: "sim-locker", version: "0.2.3" });
   const wrap = (fn) => async (args) => {
     try {
       const repo = await L.openRepo(cwd);
       const result = await fn(repo, args ?? {});
       return { content: [{ type: "text", text: JSON.stringify(result, null, 1) }], structuredContent: result };
     } catch (e) {
-      const err = { error: e instanceof L.LockerError ? e.code : "GIT", message: e.message, details: e.details ?? null };
+      const code = e instanceof L.LockerError ? e.code : "GIT";
+      const err = { error: code, code, message: e.message, details: e.details ?? null, next: e.next ?? null };
       return { isError: true, content: [{ type: "text", text: JSON.stringify(err, null, 1) }], structuredContent: err };
     }
   };
   const actor = (repo) => L.actorFromEnv(repo);
   const ro = { readOnlyHint: true }, rw = { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
 
-  server.registerTool("status", { description: "Where this folder stands: problems first (UNMANAGED, STALE, NOT FETCHED, TWO CLONES, LEASE HELD BY, STALE REVIEW), then saved / backed up / accepted / live for the current slice, the lease, and the reviews.", inputSchema: { fetch: z.boolean().optional().describe("fetch first if the last fetch is old (default true)") }, annotations: ro },
+  server.registerTool("status", { description: "Where this folder stands: problems first (UNMANAGED, STALE, NOT FETCHED, TWO CLONES, LEASE HELD BY, STALE REVIEW), then saved / backed up / accepted / live for the current slice, the lease, and the reviews. `next` holds the fix for each problem and the next step, the same words a person sees.", inputSchema: { fetch: z.boolean().optional().describe("fetch first if the last fetch is old (default true)") }, annotations: ro },
     wrap((repo, a) => L.status(repo, { fetch: a.fetch ?? true })));
   server.registerTool("save", { description: "saved: commit the work on the current slice branch, stamped with this actor. Refuses a STALE folder and refuses an agent on the truth branch.", inputSchema: { message: z.string().describe("what changed and why"), paths: z.array(z.string()).optional(), slice: z.string().optional().describe("slice branch to save on; created from the truth branch if new") }, annotations: rw },
     wrap(async (repo, a) => L.save(repo, await actor(repo), a)));

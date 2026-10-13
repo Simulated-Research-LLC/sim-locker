@@ -13,8 +13,10 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { git, revParse, currentBranch, isClean, changedFiles, blobAt, topLevel, range, aheadBehind } from "./git.js";
 
+/** A refusal: a stable code, one plain sentence, and where there is one, the next command (details.next; the CLI and the MCP
+ *  server put it beside the message, so a person and an agent see the same). */
 export class LockerError extends Error {
-  constructor(code, message, details = {}) { super(message); this.code = code; this.details = details; }
+  constructor(code, message, details = {}) { super(message); this.code = code; this.details = details; this.next = details.next ?? null; }
 }
 
 const CONFIG = "locker.json";
@@ -67,12 +69,12 @@ async function loadConfig(top, local) {
 /** Resolve a repo: a git work tree whose remote truth branch (or, before the first backup, the local one) carries locker.json. */
 export async function openRepo(cwd = process.cwd()) {
   const top = await topLevel(cwd);
-  if (!top) throw new LockerError("UNMANAGED", `${cwd} is not inside a git work tree. Sim Locker refuses to work in a plain folder; clone the project instead (sl clone <url>).`);
+  if (!top) throw new LockerError("UNMANAGED", `${cwd} is not inside a git clone; Sim Locker works only in a clone of the project`, { next: "sl clone <url>" });
   let local; try { local = JSON.parse(await readFile(join(top, CONFIG), "utf8")); }
-  catch (e) { throw new LockerError("UNMANAGED", `${top} has a .git but no readable ${CONFIG}. Run sl init here if this folder is meant to be managed.`, { cause: String(e) }); }
+  catch (e) { throw new LockerError("UNMANAGED", `${top} is a git clone with no ${CONFIG}; run sl init here to make it managed`, { cause: String(e), next: "sl init" }); }
   for (const key of ["project", "truth", "remote", "actors"]) if (!(key in local)) throw new LockerError("CONFIG", `${CONFIG} lacks "${key}"`);
   const remoteUrl = await git(top, ["remote", "get-url", local.remote], { allowFail: true });
-  if (remoteUrl === null) throw new LockerError("UNMANAGED", `remote "${local.remote}" is not configured in ${top}`);
+  if (remoteUrl === null) throw new LockerError("UNMANAGED", `remote "${local.remote}" is not set in ${top}`, { next: `git remote add ${local.remote} <url>` });
   const { config, configFrom } = await loadConfig(top, local);
   const repo = { top, config, configFrom, remoteUrl, gitDir: await gitDir(top) };
   await registerClone(repo);                                           // every clone that runs the tool is known to the registry
@@ -82,9 +84,10 @@ export async function openRepo(cwd = process.cwd()) {
 /** The actor is stamped by the tool from SL_ACTOR, never taken from a payload. The session is SL_SESSION, or one id per clone. */
 export async function actorFromEnv(repo, env = process.env) {
   const name = env.SL_ACTOR, config = repo.config;
-  if (!name) throw new LockerError("NO_ACTOR", `SL_ACTOR is not set. Set it to one of: ${Object.keys(config.actors).join(", ")}`);
+  const names = Object.keys(config.actors).join(", ");
+  if (!name) throw new LockerError("NO_ACTOR", `SL_ACTOR is not set; it says who you are, one of: ${names}`, { next: "export SL_ACTOR=<name>" });
   const kind = config.actors[name];
-  if (!kind) throw new LockerError("NO_ACTOR", `SL_ACTOR="${name}" is not an actor in ${CONFIG} on ${repo.configFrom} (${Object.keys(config.actors).join(", ")})`);
+  if (!kind) throw new LockerError("NO_ACTOR", `SL_ACTOR="${name}" is not an actor in ${CONFIG} on ${repo.configFrom}; the actors are ${names}`, { next: "export SL_ACTOR=<name>" });
   let session = env.SL_SESSION;
   if (!session) {
     const file = join(repo.gitDir, "locker-session");
@@ -207,30 +210,32 @@ async function writeLeaseRef(repo, lease, expectedSha) {
   const commit = await git(repo.top, [...ident({ name: lease.owner ?? lease.releasedBy ?? "locker" }), "commit-tree", tree, "-m", `locker lease: ${lease.owner ?? "released"} until ${lease.expires}`]);
   const guard = `--force-with-lease=${LEASE_REF}:${expectedSha ?? ""}`;
   const pushed = await git(repo.top, ["push", "--quiet", repo.config.remote, `${commit}:${LEASE_REF}`, guard], { allowFail: true });
-  if (pushed === null) throw new LockerError("LEASE_RACE", "someone else changed the lease first; fetch and look at sl status before trying again");
+  if (pushed === null) throw new LockerError("LEASE_RACE", "someone else changed the lease at the same moment; look at sl status before trying again", { next: "sl status" });
   await git(repo.top, ["update-ref", LEASE_REF, commit]);
   return commit;
 }
 
 export async function lease(repo, actor, action) {
   const f = await freshen(repo, { force: true });
-  if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${repo.config.remote}; the lease lives there`);
+  if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${repo.config.remote}, and the lease lives there; check the connection`, { next: "sl status" });
   const { sha, lease: cur } = await readLease(repo);
   const mine = cur && cur.owner === actor.name && cur.session === actor.session;
   if (action === "status") return { lease: cur, mine: !!mine };
   if (action === "release") {
     if (!cur || cur.owner === null) return { released: false, reason: "no lease is held" };
-    if (!mine && !cur.expired) throw new LockerError("LEASE_HELD", `the lease is held by ${cur.owner} (${cur.session}) until ${cur.expires}`);
+    if (!mine && !cur.expired) throw new LockerError("LEASE_HELD", `the lease is held by ${cur.owner} (session ${cur.session}) for another ${minutesLeft(cur)} min, until ${cur.expires}`, { next: "wait for it to expire, or its owner runs sl lease release" });
     await writeLeaseRef(repo, { owner: null, session: null, expires: new Date().toISOString(), releasedBy: actor.name }, sha);
     return { released: true };
   }
-  if (cur && cur.owner && !cur.expired && !mine) throw new LockerError("LEASE_HELD", `the lease is held by ${cur.owner} (${cur.session}) until ${cur.expires}; it can be taken when it expires, or released by its owner`);
-  if (action === "renew" && !mine) throw new LockerError("LEASE_NOT_MINE", "nothing to renew: this session does not hold the lease (acquire it)");
+  if (cur && cur.owner && !cur.expired && !mine) throw new LockerError("LEASE_HELD", `the lease is held by ${cur.owner} (session ${cur.session}) for another ${minutesLeft(cur)} min, until ${cur.expires}`, { next: "wait for it to expire, or its owner runs sl lease release" });
+  if (action === "renew" && !mine) throw new LockerError("LEASE_NOT_MINE", "nothing to renew: this session does not hold the lease", { next: "sl lease acquire" });
   const expires = new Date(Date.now() + repo.config.lease.ttlMinutes * 60 * 1000).toISOString();
   const next = { owner: actor.name, kind: actor.kind, session: actor.session, acquired: mine ? cur.acquired : new Date().toISOString(), expires };
   await writeLeaseRef(repo, next, sha);
   return { lease: { ...next, expired: false }, action: mine ? "renewed" : "acquired" };
 }
+
+const minutesLeft = (lease) => Math.max(0, Math.ceil((Date.parse(lease.expires) - Date.now()) / 60000));
 
 async function holdsLease(repo, actor) {
   const { lease: cur } = await readLease(repo);
@@ -260,7 +265,7 @@ async function accepted(repo) {
 /** A review record: the exact range, the reviewer, the findings, and the blob hash of every file it cites, so status can see it go stale. */
 export async function review(repo, actor, { from, to, findings, verdict }) {
   const toSha = await revParse(repo.top, to), fromRef = await revParse(repo.top, from);
-  if (!toSha || !fromRef) throw new LockerError("BAD_RANGE", `cannot resolve ${from}..${to}`);
+  if (!toSha || !fromRef) throw new LockerError("BAD_RANGE", `cannot find ${!fromRef ? from : to} in this folder; the range is <truth branch>..<slice>`, { next: `sl review ${repo.config.truth}..<slice> --verdict pass|fix|block -f "<findings>"` });
   // "main..slice" means the slice's own commits, so the range starts at the merge base, not at wherever main is today
   const fromSha = await git(repo.top, ["merge-base", fromRef, toSha]);
   if (!["pass", "fix", "block"].includes(verdict)) throw new LockerError("BAD_VERDICT", `verdict must be pass, fix or block, got "${verdict}"`);
@@ -300,7 +305,7 @@ async function requireConfirm(repo, actor, op, args, given) {
   for (const [t, v] of Object.entries(table)) if (now - v.created > CONFIRM_TTL_MS) delete table[t];
   if (given) {
     const hit = table[given];
-    if (!hit || hit.key !== key) throw new LockerError("BAD_CONFIRM", "that confirm token does not match this operation, actor and session, or it expired (10 minutes). Run the command again without --confirm to get a new one.");
+    if (!hit || hit.key !== key) throw new LockerError("BAD_CONFIRM", "that confirm token does not match this command, actor and session, or it expired (10 minutes)", { next: "run the command again without --confirm to get a new token" });
     delete table[given]; await writeFile(file, JSON.stringify(table));
     return null;
   }
@@ -341,65 +346,95 @@ export async function setLive(repo, actor, commit) {
   return { path: relative(repo.top, path), record: rec, note: "written, not saved; sl save it" };
 }
 
-/** The truth about where this folder stands. Problems first. */
+/** The truth about where this folder stands. Problems first, each with the command that fixes it; with no problem, the next step
+ *  toward the next of the four words. `next` is a list the same length as `problems` plus one, so a caller never parses prose. */
 export async function status(repo, { fetch = true } = {}) {
-  const problems = [];
+  const { truth: truthName, remote: remoteName } = repo.config;
+  const problems = [], next = [];
+  const problem = (code, text, fix) => { problems.push(text); next.push({ code, fix }); };
+  const humans = Object.entries(repo.config.actors).filter(([, k]) => k === "human").map(([n]) => n).join(" or ") || "<a human actor>";
   const freshness = fetch ? await freshen(repo) : { fetched: false, fresh: false, reason: "fetch skipped by request", ageSeconds: await lastFetchAge(repo).then((a) => (a === null ? null : Math.round(a))) };
-  if (!freshness.fresh) problems.push(`NOT FETCHED: ${freshness.reason}; everything below about the remote and the lease may be out of date`);
+  if (!freshness.fresh) problem("NOT FETCHED", `NOT FETCHED: ${freshness.reason}; everything below about the remote and the lease may be out of date`, fetch ? `check the connection to ${repo.remoteUrl}, then sl status again` : "sl status without --no-fetch (over MCP: status with fetch true)");
   const truth = await truthState(repo);
-  if (truth.stale) problems.push(`STALE: ${repo.config.truth} is ${truth.behind} commit(s) behind ${repo.config.remote}/${repo.config.truth}; pull before saving or accepting`);
-  if (!truth.remote) problems.push(`NO REMOTE TRUTH: ${repo.config.remote}/${repo.config.truth} does not exist; nothing has ever been backed up`);
-  if (repo.configFrom === "working tree") problems.push(`CONFIG FROM WORKING TREE: ${CONFIG} is not on ${repo.config.truth} yet; save and back it up`);
+  if (truth.stale) problem("STALE", `STALE: ${truthName} is ${truth.behind} save(s) behind ${remoteName}/${truthName}; pull before saving on it or accepting`, "sl pull");
+  if (!truth.remote) problem("NO REMOTE TRUTH", `NO REMOTE TRUTH: ${remoteName}/${truthName} does not exist; nothing has ever been backed up`, `on ${truthName}, as ${humans}: sl backup`);
+  if (repo.configFrom === "working tree") problem("CONFIG FROM WORKING TREE", `CONFIG FROM WORKING TREE: ${CONFIG} is not on ${truthName} yet; save and back it up`, `as ${humans}, on ${truthName}: sl save -m "manage with sim locker" ${CONFIG} .gitattributes, then sl backup`);
   const others = await otherClones(repo);
-  if (others.length) problems.push(`TWO CLONES: this project is also cloned at ${others.join(", ")}; one machine, one clone`);
+  if (others.length) problem("TWO CLONES", `TWO CLONES: this project is also cloned at ${others.join(", ")}; one machine, one clone`, `keep one folder (this one is ${repo.top}) and move the other aside; a folder that is gone is forgotten on the next sl status`);
   const { lease: cur, corrupt } = await readLease(repo);
-  if (corrupt) problems.push("LEASE CORRUPT: refs/heads/locker/lease does not hold valid JSON");
-  if (cur?.owner && !cur.expired) problems.push(`LEASE HELD BY ${cur.owner} (${cur.kind}, session ${cur.session}) until ${cur.expires}`);
-  const stale = await staleReviews(repo);
-  for (const s of stale) problems.push(`STALE REVIEW ${s.id}: ${s.moved.length} cited file(s) changed since: ${s.moved.slice(0, 5).join(", ")}${s.moved.length > 5 ? ", ..." : ""}`);
+  if (corrupt) problem("LEASE CORRUPT", "LEASE CORRUPT: refs/heads/locker/lease does not hold valid JSON", "sl lease acquire writes a fresh one");
+  if (cur?.owner && !cur.expired) problem("LEASE HELD", `LEASE HELD BY ${cur.owner} (${cur.kind}, session ${cur.session}) until ${cur.expires}`, `it expires in ${minutesLeft(cur)} min; wait, or ${cur.owner} runs sl lease release`);
   const branch = await currentBranch(repo.top);
-  if (branch === "HEAD") problems.push("DETACHED: not on any branch; check out a slice or the truth branch");
+  const reviewCmd = `sl review ${truthName}..${branch === "HEAD" ? "<slice>" : branch} --verdict pass|fix|block -f "<findings>"`;
+  for (const s of await staleReviews(repo)) problem("STALE REVIEW", `STALE REVIEW ${s.id}: ${s.moved.length} cited file(s) changed since: ${s.moved.slice(0, 5).join(", ")}${s.moved.length > 5 ? ", ..." : ""}`, `locker/reviews/${s.id}.json no longer matches the files; a different actor reviews again: ${reviewCmd}`);
+  if (branch === "HEAD") problem("DETACHED", "DETACHED: not on any branch; check out a slice or the truth branch", `sl save -m "<what and why>" --slice <name> puts the folder on a slice branch`);
   const dirty = await changedFiles(repo.top);
   const slice = await sliceState(repo, branch);
-  const ab = await aheadBehind(repo.top, branch, `${repo.config.remote}/${branch}`);
-  return { project: repo.config.project, path: repo.top, remote: repo.remoteUrl, configFrom: repo.configFrom, freshness, problems, truth: { branch: repo.config.truth, ...truth }, current: { ...slice, onTruth: branch === repo.config.truth, ahead: ab.ahead, behind: ab.behind, uncommitted: dirty }, lease: cur ?? null, reviews: (await listRecords(repo, "reviews")).map((r) => ({ id: r.id, verdict: r.verdict, reviewer: r.reviewer, to: r.range?.to })) };
+  const ab = await aheadBehind(repo.top, branch, `${remoteName}/${branch}`);
+  const reviews = (await listRecords(repo, "reviews")).map((r) => ({ id: r.id, verdict: r.verdict, reviewer: r.reviewer, to: r.range?.to }));
+  // a review stays current when the only save after the head it covers added the record itself
+  const lastFiles = ((await git(repo.top, ["show", "--name-only", "--format=", "HEAD"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
+  const reviewedHead = lastFiles.length && lastFiles.every((f) => f.startsWith("locker/reviews/")) ? await revParse(repo.top, "HEAD~1") : slice.head;
+  const onTruth = branch === truthName, passed = reviews.find((r) => (r.to === slice.head || r.to === reviewedHead) && r.verdict === "pass");
+  let step;
+  if (branch === "HEAD") step = `not on a branch: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName})`;
+  else if (onTruth && truth.stale) step = dirty.length ? `${truthName} is behind and ${dirty.length} file(s) not saved: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName}), then sl pull` : `${truthName} is behind: sl pull first`;
+  else if (dirty.length) step = `${dirty.length} file(s) not saved: sl save -m "<what and why>"${onTruth ? ` --slice <name> (only ${humans} saves on ${truthName} itself)` : ""}`;
+  else if (!slice.backedUp) step = `saved, not backed up: sl backup`;
+  else if (onTruth) step = slice.live.applies && slice.live.commit !== slice.head ? `${truthName} is backed up; when this version is what people use: sl live ${slice.head.slice(0, 7)}` : `nothing waiting; ${truthName} is backed up`;
+  else if (slice.accepted) step = `accepted as ${slice.accepted.slice(0, 7)} on ${truthName}; nothing waiting on this slice`;
+  else if (passed) step = `reviewed (${passed.id}, pass); to accept: sl lease acquire, then sl accept ${branch} --review ${passed.id}`;
+  else step = `backed up, not reviewed: a different actor runs ${reviewCmd}, then sl save the record and sl accept ${branch} --review <id>`;
+  next.push({ step });
+  return { project: repo.config.project, path: repo.top, remote: repo.remoteUrl, configFrom: repo.configFrom, freshness, problems, next, truth: { branch: truthName, ...truth }, current: { ...slice, onTruth, ahead: ab.ahead, behind: ab.behind, uncommitted: dirty }, lease: cur ?? null, reviews };
 }
 
 /** saved: commit the work on the current slice branch, stamped with the actor. Refuses a stale folder, and refuses agents on the truth branch. */
 export async function save(repo, actor, { message, paths = [], slice } = {}) {
-  if (!message) throw new LockerError("NO_MESSAGE", "save needs a message that says what changed and why");
+  if (!message) throw new LockerError("NO_MESSAGE", "save needs a message that says what changed and why", { next: `sl save -m "<what and why>"` });
   const f = await freshen(repo);
   const truth = await truthState(repo);
-  if (truth.stale) throw new LockerError("STALE", `${repo.config.truth} is ${truth.behind} commit(s) behind the remote; pull first (sl pull)`);
   const before = await currentBranch(repo.top);
   if (slice !== undefined) checkSliceName(repo, slice);
+  // a stale truth branch refuses a save on itself; a slice is its own line, and a new one starts from the remote's truth, so it is never stale
+  if (truth.stale && (slice ?? before) === repo.config.truth) {
+    const dirty = !(await isClean(repo.top));
+    throw new LockerError("STALE", `${repo.config.truth} here is ${truth.behind} save(s) behind the remote${dirty ? ", and it has changes not yet saved" : ""}`, { next: dirty ? `sl save -m "<what and why>" --slice <name> (a new slice starts from the remote's ${repo.config.truth}), then sl pull` : "sl pull" });
+  }
+  let note;
   if (slice && slice !== before) {
     const exists = await revParse(repo.top, `refs/heads/${slice}`);
-    await git(repo.top, exists ? ["checkout", "--quiet", slice] : ["checkout", "--quiet", "-b", slice, repo.config.truth]);
+    if (exists) await git(repo.top, ["checkout", "--quiet", slice]);
+    else if (truth.remote && (await git(repo.top, ["checkout", "--quiet", "-b", slice, truth.remote], { allowFail: true })) === null) {
+      // the unsaved change touches a file the remote also changed, so the new slice cannot start from the remote's truth; it starts
+      // from the local one instead and is simply behind, which accept handles from the merge base
+      await git(repo.top, ["checkout", "--quiet", "-b", slice, repo.config.truth]);
+      note = `the slice starts from the local ${repo.config.truth}, ${truth.behind} save(s) behind the remote, because the unsaved change touches a file the remote also changed`;
+    } else if (!truth.remote) await git(repo.top, ["checkout", "--quiet", "-b", slice, repo.config.truth]);
   }
   const branch = await currentBranch(repo.top);                       // what git says, not what the caller said
-  if (branch === "HEAD") throw new LockerError("DETACHED", "not on a branch; nothing is saved from a detached HEAD");
-  if (branch === repo.config.truth && actor.kind !== "human") throw new LockerError("AGENT_ON_TRUTH", `an agent does not save on ${repo.config.truth}; save on a slice branch (sl save --slice <name>) and accept it after a review`);
-  if (branch === repo.config.truth && !f.fresh) throw new LockerError("NOT_FETCHED", `cannot reach the remote, so it is unknown whether ${repo.config.truth} is behind; saving on the truth branch waits`);
+  if (branch === "HEAD") throw new LockerError("DETACHED", "this folder is not on a branch, so there is nowhere to save to", { next: `sl save -m "<what and why>" --slice <name>` });
+  if (branch === repo.config.truth && actor.kind !== "human") throw new LockerError("AGENT_ON_TRUTH", `an agent does not save on ${repo.config.truth}; it saves on a slice branch and the slice is accepted after a review`, { next: `sl save -m "<what and why>" --slice <name>` });
+  if (branch === repo.config.truth && !f.fresh) throw new LockerError("NOT_FETCHED", `cannot reach the remote, so it is unknown whether ${repo.config.truth} is behind; saving on the truth branch waits`, { next: "check the connection, then sl status" });
   await git(repo.top, ["add", "-A", "--", ...(paths.length ? paths : ["."])]);
   if (await isClean(repo.top)) return { saved: false, reason: "nothing to save", branch, head: await revParse(repo.top, "HEAD") };
   const body = `${message}\n\n${trailers({ Actor: `${actor.name} (${actor.kind})`, Session: actor.session })}\n`;
   await git(repo.top, [...ident(actor), "commit", "--quiet", "-F", "-"], { input: body });
   const head = await revParse(repo.top, "HEAD");
   const files = (await git(repo.top, ["show", "--name-only", "--format=", head])).split("\n").filter(Boolean);
-  return { saved: true, branch, head, actor: actor.name, files, ...(f.fresh ? {} : { warning: `NOT FETCHED: ${f.reason}` }) };
+  return { saved: true, branch, head, actor: actor.name, files, ...(note ? { note } : {}), ...(f.fresh ? {} : { warning: `NOT FETCHED: ${f.reason}` }) };
 }
 
 /** backed up: push the current branch and prove it arrived by asking the remote for the ref. The push exit code alone is not evidence. */
 export async function backup(repo) {
   const branch = await currentBranch(repo.top), head = await revParse(repo.top, "HEAD");
-  if (branch === "HEAD") throw new LockerError("DETACHED", "not on a branch; check one out first");
-  if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "uncommitted changes; save first, then back up");
+  if (branch === "HEAD") throw new LockerError("DETACHED", "this folder is not on a branch, so there is nothing to back up", { next: `sl save -m "<what and why>" --slice <name>` });
+  if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "there are changes not yet saved; save first, then back up", { next: `sl save -m "<what and why>"` });
   const pushed = await git(repo.top, ["push", "--quiet", repo.config.remote, `${branch}:refs/heads/${branch}`], { allowFail: true });
-  if (pushed === null) throw new LockerError("PUSH_REFUSED", `the remote refused the push of ${branch} (it has commits you do not have, or you are offline). Sim Locker never forces; pull, then try again`);
+  if (pushed === null) throw new LockerError("PUSH_REFUSED", `the remote refused the backup of ${branch}: it has saves this folder does not, or it cannot be reached; Sim Locker never forces`, { next: branch === repo.config.truth ? "sl pull, then sl backup" : "check the connection, then sl status" });
   const onRemote = await remoteRef(repo, `refs/heads/${branch}`);
-  if (onRemote === null) throw new LockerError("NOT_BACKED_UP", `the push returned but the remote could not be asked for ${branch} afterwards; not counted as backed up`);
-  if (onRemote !== head) throw new LockerError("NOT_BACKED_UP", `after the push the remote ${branch} is ${onRemote}, not ${head}`);
+  if (onRemote === null) throw new LockerError("NOT_BACKED_UP", `the backup was sent but the remote could not be asked for ${branch} afterwards, so it does not count as backed up`, { next: "sl backup again when the remote answers" });
+  if (onRemote !== head) throw new LockerError("NOT_BACKED_UP", `after the backup the remote ${branch} is ${onRemote}, not ${head}`, { next: "sl status" });
   await freshen(repo, { force: true });
   return { backedUp: true, branch, head, remote: repo.remoteUrl, verifiedBy: "ls-remote" };
 }
@@ -407,14 +442,14 @@ export async function backup(repo) {
 /** Bring the truth branch up to date, fast-forward only. */
 export async function pull(repo) {
   const f = await freshen(repo, { force: true });
-  if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${repo.config.remote}`);
+  if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${repo.config.remote}`, { next: "check the connection, then sl pull" });
   const { truth, remote } = repo.config;
   const t = await truthState(repo);
-  if (t.ahead > 0) throw new LockerError("DIVERGED", `${truth} has ${t.ahead} local commit(s) the remote does not; this needs a person to look`);
+  if (t.ahead > 0) throw new LockerError("DIVERGED", `${truth} here has ${t.ahead} save(s) the remote does not; a person decides which side to keep`);
   const branch = await currentBranch(repo.top);
   if (branch !== truth) await git(repo.top, ["fetch", "--quiet", repo.config.remote, `${truth}:${truth}`]);
   else {
-    if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "uncommitted changes on the truth branch; save or discard them before pulling");
+    if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "there are changes not yet saved on the truth branch; save or discard them before pulling", { next: `sl save -m "<what and why>"` });
     await git(repo.top, ["merge", "--ff-only", "--quiet", `${remote}/${truth}`]);
   }
   return { truth: await truthState(repo) };
@@ -422,9 +457,10 @@ export async function pull(repo) {
 
 /** The review record for a slice, read from the slice head itself, never from the working tree. */
 async function committedReview(repo, head, reviewId) {
-  if (!reviewId) throw new LockerError("NO_REVIEW", "accept needs --review <id>");
+  const reviewCmd = `sl review ${repo.config.truth}..<slice> --verdict pass -f "<findings>" (as a different actor), then sl save the record on the slice`;
+  if (!reviewId) throw new LockerError("NO_REVIEW", "accept needs the id of a review record: --review <id>", { next: reviewCmd });
   const text = await git(repo.top, ["show", `${head}:locker/reviews/${reviewId}.json`], { allowFail: true });
-  if (text === null) throw new LockerError("NO_REVIEW", `no review record ${reviewId} is committed in the slice; write one with sl review, then sl save it on the slice`);
+  if (text === null) throw new LockerError("NO_REVIEW", `no review record ${reviewId} is saved in the slice`, { next: reviewCmd });
   try { return JSON.parse(text); } catch { throw new LockerError("NO_REVIEW", `review record ${reviewId} in the slice is not valid JSON`); }
 }
 
@@ -434,7 +470,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   const { truth, remote } = repo.config;
   checkSliceName(repo, slice);
   const f = await freshen(repo, { force: true });
-  if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${remote}; accepting needs the remote`);
+  if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${remote}, and accepting needs it`, { next: "check the connection, then sl status" });
   // the config that rules is the one on the remote truth branch as just fetched, not whatever the local tracking ref said when the repo was opened
   let fresh = await loadConfig(repo.top, repo.config), bootstrap = false;
   if (fresh.configFrom !== `${remote}/${truth}`) {
@@ -452,29 +488,30 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   repo = { ...repo, config: fresh.config, configFrom: fresh.configFrom };
   if (!(actor.name in repo.config.actors)) throw new LockerError("NO_ACTOR", `${actor.name} is not an actor in ${CONFIG} on ${repo.configFrom}`);
   const t = await truthState(repo);
-  if (t.stale) throw new LockerError("STALE", `${truth} is behind the remote; pull first`);
-  if (t.ahead > 0) throw new LockerError("DIVERGED", `${truth} has local commits the remote does not; this needs a person`);
-  if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "uncommitted changes; save or discard them before accepting");
-  if (!(await holdsLease(repo, actor))) throw new LockerError("NO_LEASE", `accepting needs the lease on ${truth}; run sl lease acquire`);
-  const head = await revParse(repo.top, `refs/heads/${slice}`); if (!head) throw new LockerError("NO_SLICE", `no local branch ${slice}`);
+  if (t.stale) throw new LockerError("STALE", `${truth} here is behind the remote`, { next: "sl pull" });
+  if (t.ahead > 0) throw new LockerError("DIVERGED", `${truth} here has saves the remote does not; a person decides which side to keep`);
+  if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "there are changes not yet saved; save or discard them before accepting", { next: `sl save -m "<what and why>"` });
+  if (!(await holdsLease(repo, actor))) throw new LockerError("NO_LEASE", `accepting needs the lease on ${truth}`, { next: "sl lease acquire" });
+  const head = await revParse(repo.top, `refs/heads/${slice}`); if (!head) throw new LockerError("NO_SLICE", `there is no branch ${slice} in this folder`, { next: "sl status" });
   if (await revParse(repo.top, `refs/heads/done/${slice}`)) throw new LockerError("NAME_TAKEN", `done/${slice} already exists; a slice name is used once`);
   const base = await git(repo.top, ["merge-base", truth, slice]);
   const r = await committedReview(repo, head, reviewId);
   if (!(r.reviewer in repo.config.actors)) throw new LockerError("REVIEW_ACTOR", `review ${reviewId} names reviewer "${r.reviewer}", who is not an actor`);
-  if (r.reviewer === actor.name) throw new LockerError("REVIEW_SELF", `review ${reviewId} was written by ${actor.name}; a slice is not accepted by its own reviewer`);
-  if (r.range.from !== base) throw new LockerError("REVIEW_RANGE", `review ${reviewId} starts at ${String(r.range.from).slice(0, 7)} but the merge base is ${base.slice(0, 7)}`);
+  const reviewAgain = `a different actor runs sl review ${truth}..${slice} --verdict pass -f "<findings>", then sl save the record on the slice`;
+  if (r.reviewer === actor.name) throw new LockerError("REVIEW_SELF", `review ${reviewId} was written by ${actor.name}; a slice is not accepted by its own reviewer`, { next: `another actor accepts, or ${reviewAgain}` });
+  if (r.range.from !== base) throw new LockerError("REVIEW_RANGE", `review ${reviewId} starts at ${String(r.range.from).slice(0, 7)} but the slice now leaves ${truth} at ${base.slice(0, 7)}`, { next: reviewAgain });
   if (r.range.to !== head) {
     // the review record itself is committed after the review, so commits after range.to may only ADD files under locker/reviews/
     const ancestor = await git(repo.top, ["merge-base", "--is-ancestor", r.range.to, head], { allowFail: true });
-    if (ancestor === null) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers ${String(r.range.to).slice(0, 7)}, which is not in the history of ${slice}`);
+    if (ancestor === null) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers ${String(r.range.to).slice(0, 7)}, which is not an earlier version of ${slice}`, { next: reviewAgain });
     const z = (await git(repo.top, ["diff", "--name-status", "--no-renames", "-z", `${r.range.to}..${head}`])).split("\0").filter(Boolean);
     const since = []; for (let i = 0; i + 1 < z.length; i += 2) since.push({ st: z[i], file: z[i + 1] });
     const trailing = repo.config.accept.trailing.map(globToRegExp);
     const outside = since.filter(({ st, file }) => !((st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(file)) || (!NEVER_TRAILING.test(file) && trailing.some((re) => re.test(file)))));
-    if (outside.length) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers up to ${String(r.range.to).slice(0, 7)} but ${slice} is now at ${head.slice(0, 7)} and changed ${outside.slice(0, 5).map((x) => `${x.st} ${x.file}`).join(", ")}; review the new commits`);
+    if (outside.length) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers up to ${String(r.range.to).slice(0, 7)} but ${slice} is now at ${head.slice(0, 7)} and changed ${outside.slice(0, 5).map((x) => `${x.st} ${x.file}`).join(", ")}; the new saves need a review`, { next: reviewAgain });
   }
-  for (const [file, blob] of Object.entries(r.cited ?? {})) if ((await blobAt(repo.top, head, file)) !== blob) throw new LockerError("REVIEW_STALE", `review ${reviewId} cites ${file} at ${String(blob).slice(0, 7)} but the slice has a different version`);
-  if (r.verdict !== "pass") throw new LockerError("REVIEW_BLOCKS", `review ${reviewId} says ${r.verdict}: ${String(r.findings).slice(0, 200)}`);
+  for (const [file, blob] of Object.entries(r.cited ?? {})) if ((await blobAt(repo.top, head, file)) !== blob) throw new LockerError("REVIEW_STALE", `review ${reviewId} cites ${file} at ${String(blob).slice(0, 7)} but the slice has a different version`, { next: reviewAgain });
+  if (r.verdict !== "pass") throw new LockerError("REVIEW_BLOCKS", `review ${reviewId} says ${r.verdict}: ${String(r.findings).slice(0, 200)}`, { next: `fix the findings, sl save, then ${reviewAgain}` });
   const commits = await range(repo.top, base, head);
   const pending = await requireConfirm(repo, actor, "accept", { slice, head, reviewId }, confirm);
   if (pending) return { ...pending, slice, head, commits: commits.length, review: reviewId, ...(bootstrap ? { bootstrap: true } : {}), gate: repo.config.accept.gate ? `${repo.config.accept.gate.join(" ")} will run on ${head.slice(0, 7)} at the confirm step` : null };
@@ -492,9 +529,9 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
     // last look before the only write that matters: the lease must still be ours and the remote must not have moved
     await freshen(repo, { force: true });
     const stillMine = await holdsLease(repo, actor), remoteTruth = await revParse(repo.top, `${remote}/${truth}`);
-    if (!stillMine || remoteTruth !== t.remote) { await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]); throw new LockerError(stillMine ? "STALE" : "NO_LEASE", stillMine ? "the remote truth branch moved while accepting; the local merge was undone. Pull and try again" : "the lease was lost while accepting; the local merge was undone"); }
+    if (!stillMine || remoteTruth !== t.remote) { await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]); throw new LockerError(stillMine ? "STALE" : "NO_LEASE", stillMine ? "the remote truth branch moved while accepting; the local merge was undone" : "the lease was lost while accepting; the local merge was undone", { next: stillMine ? "sl pull, then sl accept again" : "sl lease acquire, then sl accept again" }); }
     const pushed = await git(repo.top, ["push", "--quiet", remote, `${truth}:refs/heads/${truth}`], { allowFail: true });
-    if (pushed === null) { await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]); throw new LockerError("PUSH_REFUSED", "the remote refused the push (it moved, or it cannot be reached); the local merge was undone. Pull and try again"); }
+    if (pushed === null) { await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]); throw new LockerError("PUSH_REFUSED", "the remote refused the push (it moved, or it cannot be reached); the local merge was undone", { next: "sl pull, then sl accept again" }); }
     const onRemote = await remoteRef(repo, `refs/heads/${truth}`);
     if (onRemote !== merge) throw new LockerError("NOT_BACKED_UP", `after the push the remote ${truth} is ${onRemote}, not ${merge}; look before doing anything else`);
     await freshen(repo, { force: true });
@@ -510,34 +547,37 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
 export async function revert(repo, actor, { commit, confirm }) {
   const sha = await revParse(repo.top, commit); if (!sha) throw new LockerError("BAD_COMMIT", `cannot resolve ${commit}`);
   const branch = await currentBranch(repo.top);
-  if (branch === "HEAD") throw new LockerError("DETACHED", "not on a branch");
-  if (branch === repo.config.truth && actor.kind !== "human") throw new LockerError("AGENT_ON_TRUTH", `an agent does not revert on ${repo.config.truth}; do it on a slice and accept that`);
-  if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "uncommitted changes; save or discard them first");
+  if (branch === "HEAD") throw new LockerError("DETACHED", "this folder is not on a branch", { next: `sl save -m "<what and why>" --slice <name>` });
+  if (branch === repo.config.truth && actor.kind !== "human") throw new LockerError("AGENT_ON_TRUTH", `an agent does not revert on ${repo.config.truth}; it reverts on a slice and the slice is accepted`, { next: `sl save -m "<what and why>" --slice <name>, then sl revert` });
+  if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "there are changes not yet saved; save or discard them first", { next: `sl save -m "<what and why>"` });
   const pending = await requireConfirm(repo, actor, "revert", { sha, branch }, confirm);
   if (pending) return { ...pending, commit: sha, branch };
   const out = await git(repo.top, [...ident(actor), "revert", "--no-edit", sha], { allowFail: true });
-  if (out === null) { await git(repo.top, ["revert", "--abort"], { allowFail: true }); throw new LockerError("REVERT_CONFLICT", "the revert does not apply cleanly; this needs a person"); }
+  if (out === null) { await git(repo.top, ["revert", "--abort"], { allowFail: true }); throw new LockerError("REVERT_CONFLICT", "the undo does not apply cleanly on its own; a person does it by hand"); }
   return { reverted: sha, head: await revParse(repo.top, "HEAD"), branch };
 }
 
 /** Make a clone managed. If the project already has a locker.json, nothing is rewritten; only this clone's driver and registration are set. */
 export async function init(cwd, { project, truth = "main", remote = "origin", actors, live } = {}) {
-  const top = await topLevel(cwd); if (!top) throw new LockerError("UNMANAGED", `${cwd} is not a git work tree; clone first`);
+  const top = await topLevel(cwd); if (!top) throw new LockerError("UNMANAGED", `${cwd} is not a git clone; Sim Locker works only in a clone of the project`, { next: "sl clone <url>" });
   const url = await git(top, ["remote", "get-url", remote], { allowFail: true });
-  if (url === null) throw new LockerError("CONFIG", `remote "${remote}" is not set; add it first (git remote add ${remote} <url>)`);
-  let wrote = false;
+  if (url === null) throw new LockerError("CONFIG", `remote "${remote}" is not set in ${top}`, { next: `git remote add ${remote} <url>, then sl init` });
+  const wrote = [];
   try { await stat(join(top, CONFIG)); }
   catch {
     const config = { project: project ?? top.split(/[\\/]/).pop(), truth, remote, actors: actors ?? { rick: "human", claude: "agent", astra: "agent", percept: "model" }, lease: { ttlMinutes: 30 }, fetch: { maxAgeSeconds: 300 }, live: live ?? { kind: "none" }, confirm: ["accept", "revert"] };
-    await writeFile(join(top, CONFIG), JSON.stringify(config, null, 2) + "\n"); wrote = true;
+    await writeFile(join(top, CONFIG), JSON.stringify(config, null, 2) + "\n"); wrote.push(`${CONFIG} (project ${config.project}, truth branch ${truth}, remote ${remote}, actors ${Object.keys(config.actors).join(", ")})`);
   }
   let attrs = ""; try { attrs = await readFile(join(top, ".gitattributes"), "utf8"); } catch { /* none */ }
-  if (!attrs.includes("merge=locker-record")) await writeFile(join(top, ".gitattributes"), attrs + (attrs && !attrs.endsWith("\n") ? "\n" : "") + "*.record.json merge=locker-record\nlocker/**/*.json merge=locker-record\n");
+  if (!attrs.includes("merge=locker-record")) { await writeFile(join(top, ".gitattributes"), attrs + (attrs && !attrs.endsWith("\n") ? "\n" : "") + "*.record.json merge=locker-record\nlocker/**/*.json merge=locker-record\n"); wrote.push(".gitattributes (record files merge per key)"); }
   const sl = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "sl.js");
   await git(top, ["config", "merge.locker-record.name", "Sim Locker record merge (per top-level key)"]);
   await git(top, ["config", "merge.locker-record.driver", `"${process.execPath}" "${sl}" merge-record %O %A %B %P`]);
+  wrote.push(".git/config (the record merge driver, this clone only)");
   const repo = await openRepo(top);
-  return { top, config: repo.config, wroteConfig: wrote, configFrom: repo.configFrom };
+  const humans = Object.entries(repo.config.actors).filter(([, k]) => k === "human").map(([n]) => n).join(" or ") || "<a human actor>";
+  const next = repo.configFrom === "working tree" ? `as ${humans}, on ${truth}: sl save -m "manage with sim locker" ${CONFIG} .gitattributes, then sl backup; then every command needs SL_ACTOR set` : `${CONFIG} already rules from ${repo.configFrom}; set SL_ACTOR and run sl status`;
+  return { top, config: repo.config, wroteConfig: wrote.some((w) => w.startsWith(CONFIG)), wrote, configFrom: repo.configFrom, next };
 }
 
 /** Find records whose text matches. */
@@ -554,11 +594,11 @@ export async function find(repo, query) {
  *  command there. The record count is reported, not checked: the same commit is the same tree. Fails with DRILL_FAILED and leaves the folders for a look; passes and removes them unless told to keep. */
 export async function drill(repo, { test, keep = false, dir } = {}) {
   const f = await freshen(repo, { force: true });
-  if (!f.fresh) throw new LockerError("NOT_BACKED_UP", `cannot ask ${repo.config.remote}: ${f.reason}; a drill from a stale tracking ref proves nothing`);
+  if (!f.fresh) throw new LockerError("NOT_BACKED_UP", `cannot ask ${repo.config.remote}: ${f.reason}; a drill from an old copy of the remote proves nothing`, { next: "check the connection, then sl drill" });
   const { truth, remote } = repo.config;
   const head = await revParse(repo.top, `${remote}/${truth}`);
-  if (!head) throw new LockerError("NOT_BACKED_UP", `${remote}/${truth} does not exist; there is nothing to restore from`);
-  if ((await git(repo.top, ["rev-parse", "--is-shallow-repository"])) === "true") throw new LockerError("USAGE", "this clone is shallow, so it cannot stand in for the remote; run git fetch --unshallow first");
+  if (!head) throw new LockerError("NOT_BACKED_UP", `${remote}/${truth} does not exist; there is nothing to restore from`, { next: `on ${truth}, as a human actor: sl backup` });
+  if ((await git(repo.top, ["rev-parse", "--is-shallow-repository"])) === "true") throw new LockerError("USAGE", "this clone holds only part of the history (a shallow clone), so it cannot stand in for the remote", { next: "git fetch --unshallow, then sl drill" });
   // the drill settings come from the exact commit being restored, read after the fetch, not from the config openRepo loaded before it
   const text = await git(repo.top, ["show", `${head}:${CONFIG}`], { allowFail: true });
   let settings = { test: null, timeoutSeconds: 900 };
