@@ -1,0 +1,26 @@
+{
+ "id": "rev_e819d8ef54b2",
+ "kind": "review",
+ "range": {
+  "from": "099c28d9dccce7607f61ff531f26457da1a61433",
+  "to": "5c08e6884045f425d17eee584cf491ac789d0aef"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Reran the 0.1 attack list, the audit's points and ASTRA_BRIEF's targets against 0.2.7 in scratch clones, with the branch's own bin. The nine findings of the 0.2.6 rerun are closed as described: a review record edited in a later save (fix to pass, block to pass) is REVIEW_STALE naming M locker/reviews/ and status says not reviewed; a record removed and re-added shows D then A; a record brought in by a save with two parents, whether from main or a side branch, is named as such or stops at REVIEW_RANGE; a mixed save, a rename into locker/reviews/ and a non rev_ file there are all refused; a record edited in the same save that added it is still accepted, which is the open question as written. A used slice name is NAME_TAKEN at save --slice and at accept from a second clone, before any branch is made. A record file both sides changed stops with the keyed marks counted as marks (MARKERS_LEFT until settled), a side the driver could not read is named in update and status and stays listed; a both-added record is treated as both-changed. A record only on disk is not a review in status and NO_REVIEW at accept. A path outside the folder is BAD_PATH with no branch made; a reversed or empty range is BAD_RANGE; a remote refusing locker/* is PUSH_REFUSED naming the branch; an accept started from the slice and refused at its last look leaves the folder on the slice (reproduced with a 3 s lease and a 4 s gate, remote main untouched). Six clones racing for the lease over three rounds gave one winner each round. 27 tests pass serially, 1104 lines, no em dash in the diff, README, backlog and errata match what the code does. Two polish notes, no code change needed: README's tested list says the reused name is refused at save and at accept but the suite asserts only the save, the accept half is this review's run; and a both-changed record kept as the slice's copy cannot be told from one not yet looked at, so it stays listed while save proceeds, which the next-step text already says.",
+ "cited": {
+  "AGENTS.md": "295ebc752ee09f7c339e8b32c7192f10057a534d",
+  "CLAUDE.md": "295ebc752ee09f7c339e8b32c7192f10057a534d",
+  "README.md": "73a43e500288c0484b2603c99cab175a5efe1483",
+  "docs/backlog.md": "7ae0a408066a8a2a38da7acb6603490f78589854",
+  "docs/errata.md": "c783d50009baaca437eacad9c1428e59f896774e",
+  "package-lock.json": "823448ef61df755d6e56c9aa394a489d9b2e1da9",
+  "package.json": "9b67e840aec87bd991ed11c25a1144dc5d7e7be0",
+  "src/locker.js": "3280d9d50ccbe0041896bdbd5dd72578fe997738",
+  "src/mcp.js": "121001f96da2a5a7a0279469ffd9419fc9b8988e",
+  "test/locker.test.js": "f3c27e3f47b3c4f777349592ddc1cb580326b674"
+ },
+ "created": "2026-10-14T04:49:56.445Z"
+}

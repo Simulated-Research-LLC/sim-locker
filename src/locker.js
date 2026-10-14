@@ -6,7 +6,7 @@
 // or uses raw git, is stopped only by GitHub branch protection or a server hook. Sim Locker makes the honest path easy and the
 // dishonest path visible (trailers, records, the lease); it does not make it impossible.
 import { readFile, writeFile, mkdir, mkdtemp, readdir, stat, rm } from "node:fs/promises";
-import { join, relative, resolve, dirname } from "node:path";
+import { join, relative, resolve, dirname, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -210,7 +210,11 @@ async function writeLeaseRef(repo, lease, expectedSha) {
   const commit = await git(repo.top, [...ident({ name: lease.owner ?? lease.releasedBy ?? "locker" }), "commit-tree", tree, "-m", `locker lease: ${lease.owner ?? "released"} until ${lease.expires}`]);
   const guard = `--force-with-lease=${LEASE_REF}:${expectedSha ?? ""}`;
   const pushed = await git(repo.top, ["push", "--quiet", repo.config.remote, `${commit}:${LEASE_REF}`, guard], { allowFail: true });
-  if (pushed === null) throw new LockerError("LEASE_RACE", "someone else changed the lease at the same moment; look at sl status before trying again", { next: "sl status" });
+  if (pushed === null) {
+    const now = await remoteRef(repo, LEASE_REF);
+    if ((now ?? "") === (expectedSha ?? "")) throw new LockerError("PUSH_REFUSED", `the remote did not take the lease branch ${LEASE_REF}; it may refuse pushes under refs/heads/locker/, which Sim Locker needs`, { next: "check the remote's branch rules" });
+    throw new LockerError("LEASE_RACE", "someone else changed the lease at the same moment; look at sl status before trying again", { next: "sl status" });
+  }
   await git(repo.top, ["update-ref", LEASE_REF, commit]);
   return commit;
 }
@@ -246,11 +250,33 @@ async function holdsLease(repo, actor) {
 
 const recordsDir = (repo, kind) => join(repo.top, "locker", kind);
 
-async function listRecords(repo, kind) {
-  const dir = recordsDir(repo, kind); let names = [];
+async function listRecords(repo, kind, ref = null) {
+  const dir = recordsDir(repo, kind), rel = relative(repo.top, dir).split("\\").join("/"); let names = [], out = [];
+  if (ref) {   // the records as saved at ref, never the working tree's (a record only on disk is not one accept will see)
+    names = ((await git(repo.top, ["ls-tree", "-r", "--name-only", ref, "--", rel], { allowFail: true })) ?? "").split("\n").filter((n) => n.endsWith(".json")).sort();
+    for (const path of names) { try { out.push({ path, ...JSON.parse(await git(repo.top, ["show", `${ref}:${path}`])) }); } catch (e) { out.push({ path, unreadable: String(e) }); } }
+    return out;
+  }
   try { names = (await readdir(dir)).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
-  const out = [];
   for (const n of names) { try { out.push({ path: relative(repo.top, join(dir, n)), ...JSON.parse(await readFile(join(dir, n), "utf8")) }); } catch (e) { out.push({ path: relative(repo.top, join(dir, n)), unreadable: String(e) }); } }
+  return out;
+}
+
+/** The saves after a reviewed head, judged one by one, the way accept and status both read them: each may only add review records
+ *  (each once; an edit or a removal of a record is a change) or change the project's trailing files, and none may have two parents.
+ *  Returns the changes that break that, empty when the review still covers the head. */
+async function savesAfter(repo, from, head) {
+  const trailing = repo.config.accept.trailing.map(globToRegExp), out = [], added = new Set();
+  for (const c of ((await git(repo.top, ["rev-list", "--reverse", `${from}..${head}`], { allowFail: true })) ?? "").split("\n").filter(Boolean)) {
+    if (((await git(repo.top, ["rev-list", "--parents", "-n", "1", c])).split(" ").length) !== 2) { out.push({ st: "merge", file: `a save with two parents (${c.slice(0, 7)})` }); continue; }
+    const z = (await git(repo.top, ["diff-tree", "--no-commit-id", "--name-status", "--no-renames", "-r", "-z", c])).split("\0").filter(Boolean);
+    for (let i = 0; i + 1 < z.length; i += 2) {
+      const st = z[i], file = z[i + 1], record = /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(file);
+      if (record && st === "A" && !added.has(file)) { added.add(file); continue; }
+      if (!record && !NEVER_TRAILING.test(file) && trailing.some((re) => re.test(file))) continue;
+      out.push({ st, file });
+    }
+  }
   return out;
 }
 
@@ -268,6 +294,7 @@ export async function review(repo, actor, { from, to, findings, verdict }) {
   if (!toSha || !fromRef) throw new LockerError("BAD_RANGE", `cannot find ${!fromRef ? from : to} in this folder; the range is <truth branch>..<slice>`, { next: `sl review ${repo.config.truth}..<slice> --verdict pass|fix|block -f "<findings>"` });
   // "main..slice" means the slice's own commits, so the range starts at the merge base, not at wherever main is today
   const fromSha = await git(repo.top, ["merge-base", fromRef, toSha]);
+  if (fromSha === toSha) throw new LockerError("BAD_RANGE", `${to} has nothing beyond ${from}; there is no range to review`, { next: `sl review ${repo.config.truth}..<slice> --verdict pass|fix|block -f "<findings>"` });
   if (!["pass", "fix", "block"].includes(verdict)) throw new LockerError("BAD_VERDICT", `verdict must be pass, fix or block, got "${verdict}"`);
   const files = (await git(repo.top, ["diff", "--name-only", "--no-renames", `${fromSha}..${toSha}`])).split("\n").filter(Boolean);
   const cited = {}; for (const f of files) cited[f] = await blobAt(repo.top, toSha, f);
@@ -281,14 +308,14 @@ export async function review(repo, actor, { from, to, findings, verdict }) {
 
 async function staleReviews(repo) {
   const out = [], done = await accepted(repo);
-  for (const r of await listRecords(repo, "reviews")) {
+  for (const r of await listRecords(repo, "reviews", "HEAD")) {
     if (r.unreadable || !r.cited || done.reviews.has(r.id)) continue;
     // a review of an earlier head of a slice that was later accepted is superseded, not stale
     let superseded = false;
     for (const h of done.heads) if (r.range?.to && (await git(repo.top, ["merge-base", "--is-ancestor", r.range.to, h], { allowFail: true })) !== null) { superseded = true; break; }
     if (superseded) continue;
     // a newer review that covers this head, or an earlier version of it past this review's head, replaces this one
-    for (const n of await listRecords(repo, "reviews")) {
+    for (const n of await listRecords(repo, "reviews", "HEAD")) {
       if (n.id === r.id || !n.range?.to || !r.range?.to) continue;
       const later = (await git(repo.top, ["merge-base", "--is-ancestor", r.range.to, n.range.to], { allowFail: true })) !== null && n.range.to !== r.range.to;
       if (later && (await git(repo.top, ["merge-base", "--is-ancestor", n.range.to, "HEAD"], { allowFail: true })) !== null) { superseded = true; break; }
@@ -382,17 +409,15 @@ export async function status(repo, { fetch = true } = {}) {
   const dirty = await changedFiles(repo.top);
   const slice = await sliceState(repo, branch);
   const ab = await aheadBehind(repo.top, branch, `${remoteName}/${branch}`);
-  const reviews = (await listRecords(repo, "reviews")).map((r) => ({ id: r.id, verdict: r.verdict, reviewer: r.reviewer, to: r.range?.to }));
-  // a review stays current over the saves accept allows after the reviewed head: added review records and the project's trailing files,
-  // read the way accept reads them (no rename detection, an added record is A), and never across a save with two parents
-  const trailing = repo.config.accept.trailing.map(globToRegExp), covered = new Set([slice.head]), stale = new Set((await staleReviews(repo)).map((s) => s.id));
-  for (let h = slice.head, n = 0; h && n < 20; n++) {
-    if (((await git(repo.top, ["rev-list", "--parents", "-n", "1", h], { allowFail: true })) ?? "").split(" ").length !== 2) break;
-    const changes = ((await git(repo.top, ["show", "--name-status", "--no-renames", "--format=", h], { allowFail: true })) ?? "").split("\n").filter(Boolean).map((l) => { const [st, f] = l.split("\t"); return { st, f }; });
-    if (!changes.length || !changes.every(({ st, f }) => (st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(f)) || (!NEVER_TRAILING.test(f) && trailing.some((re) => re.test(f))))) break;
-    h = await revParse(repo.top, `${h}~1`); if (h) covered.add(h);
+  const reviews = (await listRecords(repo, "reviews", "HEAD")).map((r) => ({ id: r.id, verdict: r.verdict, reviewer: r.reviewer, to: r.range?.to }));
+  // a review covers the head when the saves after its head are only what accept allows (added records, trailing files), judged save by save
+  const stale = new Set((await staleReviews(repo)).map((s) => s.id)), covered = new Set();
+  for (const r of reviews) {
+    if (!r.to || stale.has(r.id) || r.verdict !== "pass") continue;
+    if (r.to === slice.head) { covered.add(r.id); continue; }
+    if ((await git(repo.top, ["merge-base", "--is-ancestor", r.to, slice.head], { allowFail: true })) !== null && !(await savesAfter(repo, r.to, slice.head)).length) covered.add(r.id);
   }
-  const onTruth = branch === truthName, passed = reviews.find((r) => covered.has(r.to) && r.verdict === "pass" && !stale.has(r.id));
+  const onTruth = branch === truthName, passed = reviews.find((r) => covered.has(r.id));
   let step;
   if (branch === "HEAD") step = `not on a branch: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName})`;
   else if (onTruth && truth.stale) step = dirty.length ? `${truthName} is behind and ${dirty.length} file(s) not saved: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName}), then sl pull` : `${truthName} is behind: sl pull first`;
@@ -413,15 +438,17 @@ export async function save(repo, actor, { message, paths = [], slice } = {}) {
   const truth = await truthState(repo);
   const before = await currentBranch(repo.top);
   if (slice !== undefined) checkSliceName(repo, slice);
-  // a stale truth branch refuses a save on itself; a slice is its own line, and a new one starts from the remote's truth, so it is never stale
+  // a stale truth branch refuses a save on itself; a slice is its own line, and a new one starts from the remote's truth as last fetched
   if (truth.stale && (slice ?? before) === repo.config.truth) {
     const dirty = !(await isClean(repo.top));
     throw new LockerError("STALE", `${repo.config.truth} here is ${truth.behind} save(s) behind the remote${dirty ? ", and it has changes not yet saved" : ""}`, { next: dirty ? `sl save -m "<what and why>" --slice <name> (a new slice starts from the remote's ${repo.config.truth}), then sl pull` : "sl pull" });
   }
   if (await mergeInProgress(repo) && (paths.length || (slice && slice !== before))) throw new LockerError("UPDATE_CONFLICT", "an update is waiting; it is finished with one save of everything, on this branch", { next: `sl save -m "<what and why>" (no paths, no --slice)` });
+  for (const p of paths) { const abs = resolve(repo.top, p); if (abs !== repo.top && !abs.startsWith(repo.top + sep)) throw new LockerError("BAD_PATH", `${p} is outside this folder; a save takes only files in it`); }
   let note;
   if (slice && slice !== before) {
     const exists = await revParse(repo.top, `refs/heads/${slice}`);
+    if (!exists && (await revParse(repo.top, `refs/heads/done/${slice}`) || await remoteRef(repo, `refs/heads/done/${slice}`))) throw new LockerError("NAME_TAKEN", `done/${slice} already exists here or on ${repo.config.remote}; a slice name is used once`, { next: `sl save -m "<what and why>" --slice <another name>` });
     if (exists) await git(repo.top, ["checkout", "--quiet", slice]);
     else if (truth.remote && (await git(repo.top, ["checkout", "--quiet", "-b", slice, truth.remote], { allowFail: true })) === null) {
       // the unsaved change touches a file the remote also changed, so the new slice cannot start from the remote's truth; it starts
@@ -497,14 +524,14 @@ export async function update(repo, actor, { message } = {}) {
   try { await git(repo.top, [...ident(actor), "merge", "--no-ff", "--quiet", "-m", body, `${remote}/${truth}`]); } catch (e) {
     if (!(await conflictFiles(repo)).length) { await git(repo.top, ["merge", "--abort"], { allowFail: true }); throw new LockerError("GIT", `bringing ${truth} into ${branch} failed: ${(e.stderr ?? String(e)).trim()}`, { next: "sl status" }); }
     const u = await unsettled(repo);
-    throw new LockerError("UPDATE_CONFLICT", [u.marked.length ? `${branch} and ${truth} changed the same lines in ${u.marked.join(", ")}; those lines are in the files now with git's marks` : "", u.oneSided.length ? `${u.oneSided.join(", ")} changed on one side and deleted on the other` : "", u.binary.length ? `${u.binary.join(", ")} is a binary file changed on both sides` : ""].filter(Boolean).join("; "), { files: u.files, next: settleNext(u) });
+    throw new LockerError("UPDATE_CONFLICT", [u.marked.length ? `${branch} and ${truth} changed the same lines in ${u.marked.join(", ")}; those lines are in the files now with git's marks` : "", u.oneSided.length ? `${u.oneSided.join(", ")} changed on one side and deleted on the other` : "", u.binary.length ? `${u.binary.join(", ")} is a binary file changed on both sides` : "", u.unmerged.length ? `${u.unmerged.join(", ")} changed on both sides and could not be merged` : ""].filter(Boolean).join("; "), { files: u.files, next: settleNext(u) });
   }
   return { updated: true, branch, head: await revParse(repo.top, "HEAD"), from: target, actor: actor.name };
 }
 const mergeInProgress = async (repo) => (await stat(join(repo.gitDir, "MERGE_HEAD")).catch(() => null)) !== null;
 /** While an update waits: the files changed on one side and deleted on the other, the binary files changed on both sides, and the files the update touched that still hold git's marks in the tree. */
 async function unsettled(repo) {
-  const MARKS = ["-e", "^<<<<<<< ", "-e", "^=======$", "-e", "^>>>>>>> "];
+  const MARKS = ["-e", "^<<<<<<< ", "-e", "^=======$", "-e", "^>>>>>>> ", "-e", "^[[:space:]]*\"<<<<<<< ours\"", "-e", "^[[:space:]]*\">>>>>>> theirs\""];
   const lines = async (args) => new Set(((await git(repo.top, ["grep", "-h", ...MARKS, ...args], { allowFail: true })) ?? "").split("\n").filter(Boolean));
   // unmerged entries: a file with all three stages was changed on both sides; a file missing a stage was changed on one side and deleted
   // on the other, and stays listed until the person keeps or deletes it and saves
@@ -512,22 +539,24 @@ async function unsettled(repo) {
   for (const l of ((await git(repo.top, ["ls-files", "-u"], { allowFail: true })) ?? "").split("\n").filter(Boolean)) { const [meta, file] = l.split("\t"); stages.set(file, (stages.get(file) ?? new Set()).add(meta.split(" ")[2])); }
   const touched = ((await git(repo.top, ["diff", "--name-only", "HEAD", "MERGE_HEAD"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
   const candidates = touched.length ? ((await git(repo.top, ["grep", "-l", ...MARKS, "--", ...touched], { allowFail: true })) ?? "").split("\n").filter(Boolean) : [];
-  const marked = [], oneSided = [], binary = [];
+  const marked = [], oneSided = [], binary = [], unmerged = [];
   for (const file of candidates) {   // a line that looks like a mark but is in a parent's copy is content (a Markdown underline, say); the check is per line
     const own = await lines(["--", file]), parents = await lines(["HEAD", "MERGE_HEAD", "--", file]);
     if ([...own].some((l) => !parents.has(l))) marked.push(file);
   }
   for (const [file, st] of stages) {
-    if (st.size < 3) oneSided.push(file);
+    if (!(st.has("2") && st.has("3"))) oneSided.push(file);   // one side's stage is missing: changed on one side, deleted on the other (both added is both-changed)
     else if (!marked.includes(file) && ((await git(repo.top, ["diff", "--numstat", "HEAD", "MERGE_HEAD", "--", file], { allowFail: true })) ?? "").startsWith("-\t-")) binary.push(file);
+    else if (!marked.includes(file) && (await git(repo.top, ["diff", "--quiet", "HEAD", "--", file], { allowFail: true })) !== null) unmerged.push(file);   // both sides changed it, no mark, and the copy is still HEAD's: the merge driver could not merge it (a record that is not valid JSON on one side, say)
   }
-  return { files: [...new Set([...marked, ...oneSided, ...binary])], marked, oneSided, binary };
+  return { files: [...new Set([...marked, ...oneSided, ...binary, ...unmerged])], marked, oneSided, binary, unmerged };
 }
 const conflictFiles = async (repo) => ((await git(repo.top, ["diff", "--name-only", "--diff-filter=U"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
 const settleNext = (u) => [
   u.marked.length ? `open ${u.marked.join(", ")}, keep the lines you want between the <<<<<<< and >>>>>>> marks and delete the marks (in a record file the two sides are keys named "<<<<<<< ours" and ">>>>>>> theirs")` : "",
   u.oneSided.length ? `${u.oneSided.join(", ")}: changed on one side and deleted on the other; keep the file or delete it` : "",
   u.binary.length ? `${u.binary.join(", ")}: a binary file changed on both sides; put the copy you want in its place` : "",
+  u.unmerged.length ? `${u.unmerged.join(", ")}: changed on both sides and not merged (the slice's copy is in place); put the copy you want in its place` : "",
   u.files.length ? `then sl save -m "<what and why>"` : `the marked lines are settled; sl save -m "<what and why>" finishes the update`,
 ].filter(Boolean).join("; ");
 
@@ -569,7 +598,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "there are changes not yet saved; save or discard them before accepting", { next: `sl save -m "<what and why>"` });
   if (!(await holdsLease(repo, actor))) throw new LockerError("NO_LEASE", `accepting needs the lease on ${truth}`, { next: "sl lease acquire" });
   const head = await revParse(repo.top, `refs/heads/${slice}`); if (!head) throw new LockerError("NO_SLICE", `there is no branch ${slice} in this folder`, { next: "sl status" });
-  if (await revParse(repo.top, `refs/heads/done/${slice}`)) throw new LockerError("NAME_TAKEN", `done/${slice} already exists; a slice name is used once`);
+  if (await revParse(repo.top, `refs/heads/done/${slice}`) || await remoteRef(repo, `refs/heads/done/${slice}`)) throw new LockerError("NAME_TAKEN", `done/${slice} already exists here or on ${remote}; a slice name is used once`);
   const base = await git(repo.top, ["merge-base", truth, slice]);
   const r = await committedReview(repo, head, reviewId);
   if (!(r.reviewer in repo.config.actors)) throw new LockerError("REVIEW_ACTOR", `review ${reviewId} names reviewer "${r.reviewer}", who is not an actor`);
@@ -577,13 +606,10 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   if (r.reviewer === actor.name) throw new LockerError("REVIEW_SELF", `review ${reviewId} was written by ${actor.name}; a slice is not accepted by its own reviewer`, { next: `another actor accepts, or ${reviewAgain}` });
   if (r.range.from !== base) throw new LockerError("REVIEW_RANGE", `review ${reviewId} starts at ${String(r.range.from).slice(0, 7)} but the slice now leaves ${truth} at ${base.slice(0, 7)}`, { next: reviewAgain });
   if (r.range.to !== head) {
-    // the review record itself is committed after the review, so commits after range.to may only ADD files under locker/reviews/
+    // the review record itself is committed after the review, so the saves after range.to may only add records (once each) or change trailing files
     const ancestor = await git(repo.top, ["merge-base", "--is-ancestor", r.range.to, head], { allowFail: true });
     if (ancestor === null) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers ${String(r.range.to).slice(0, 7)}, which is not an earlier version of ${slice}`, { next: reviewAgain });
-    const z = (await git(repo.top, ["diff", "--name-status", "--no-renames", "-z", `${r.range.to}..${head}`])).split("\0").filter(Boolean);
-    const since = []; for (let i = 0; i + 1 < z.length; i += 2) since.push({ st: z[i], file: z[i + 1] });
-    const trailing = repo.config.accept.trailing.map(globToRegExp);
-    const outside = since.filter(({ st, file }) => !((st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(file)) || (!NEVER_TRAILING.test(file) && trailing.some((re) => re.test(file)))));
+    const outside = await savesAfter(repo, r.range.to, head);
     if (outside.length) throw new LockerError("REVIEW_STALE", `review ${reviewId} covers up to ${String(r.range.to).slice(0, 7)} but ${slice} is now at ${head.slice(0, 7)} and changed ${outside.slice(0, 5).map((x) => `${x.st} ${x.file}`).join(", ")}; the new saves need a review`, { next: reviewAgain });
   }
   for (const [file, blob] of Object.entries(r.cited ?? {})) if ((await blobAt(repo.top, head, file)) !== blob) throw new LockerError("REVIEW_STALE", `review ${reviewId} cites ${file} at ${String(blob).slice(0, 7)} but the slice has a different version`, { next: reviewAgain });
@@ -595,7 +621,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
     const gate = await runGate(repo, head, actor);
     if (gate.code !== 0) throw new LockerError("GATE_FAILED", `the project's own gate refused (${repo.config.accept.gate.join(" ")} on ${head.slice(0, 7)}, exit ${gate.code}):\n${gate.output.trim().split("\n").slice(-12).join("\n")}`, { output: gate.output });
   }
-  const was = await currentBranch(repo.top); let done = false;
+  const was = await currentBranch(repo.top); let done = false, acceptedNow = false;
   await git(repo.top, ["checkout", "--quiet", truth]);
   try {
     try { await git(repo.top, [...ident(actor), "merge", "--squash", "--quiet", head]); } catch (e) {
@@ -621,9 +647,10 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
     await freshen(repo, { force: true });
     await git(repo.top, ["branch", "-m", slice, `done/${slice}`]);
     const kept = await git(repo.top, ["push", "--quiet", remote, `done/${slice}:refs/heads/done/${slice}`], { allowFail: true });
+    acceptedNow = true;
     return { accepted: true, merge, slice, keptAs: `done/${slice}`, keptOnRemote: kept !== null, commits: commits.length, review: reviewId, ...(bootstrap ? { bootstrap: `${CONFIG} was not on ${remote}/${truth}; this slice's copy ruled this acceptance and is now on the truth branch` } : {}) };
   } finally {
-    if (!done && was !== slice && was !== truth) await git(repo.top, ["checkout", "--quiet", was], { allowFail: true });
+    if (!done && !acceptedNow && was !== truth) await git(repo.top, ["checkout", "--quiet", was], { allowFail: true });   // refused: back where it started
   }
 }
 
