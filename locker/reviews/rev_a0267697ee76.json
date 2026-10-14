@@ -1,0 +1,20 @@
+{
+ "id": "rev_a0267697ee76",
+ "kind": "review",
+ "range": {
+  "from": "309c539b013d248e8c89cbae5168a49a0a6f168f",
+  "to": "94698e30bcf4fad5aa87631a39955b95005ce4e7"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Checked docs/review-0.2.md and the README, CLAUDE.md and AGENTS.md pointers against main 309c539. Every bracketed fix claim matches the code and the tests on main: savesAfter is shared by accept and status and treats an edited or removed record as a change, added in 0.2.7 with the test the attacks of 2026-10-14; the keyed marks count as marks and an unmerged record copy is named, 0.2.7; done/<slice> is asked on the remote at save --slice and at accept, tested at save in 0.2.7 and at accept in 0.2.8; the lease paragraph in README says the session id is not a secret, 0.2.7; records are read from HEAD in status and staleReviews, 0.2.7; PUSH_REFUSED names the lease branch when the remote leaves it unchanged, 0.2.7; the finally clause puts the folder back where it started and the 0.2.8 test runs a 3 s lease against a 4 s gate; BAD_PATH comes before the branch is made and BAD_RANGE refuses an empty range, 0.2.7; the STALE wording says as last fetched, 0.2.7. The wrong-clock sentence matches 0.2.8's lastFetchAge, which reads the time in the stamp and returns null for a negative age. locker/reviews/rev_e819d8ef54b2.json is on main, reviewer reviewer, verdict pass, its findings describe the rerun against 0.2.7 and the nine findings, and its reviewed head is on done/slice/attack-fixes. main 099c28d is 0.2.6, 39aa520 is 0.2.7 and 1c7fd61 is 0.2.8 as the record says; nine findings, one blocking, as README says. No em dash in the diff. Two polish notes, no change needed: findings 7 and 8 have no row in the attack table that points at them (the M1 row and the option-shaped args row say held without the polish), and the words the same reviewer for rev_e819d8ef54b2 cannot be checked from the repo, though that record's own text is consistent with it.",
+ "cited": {
+  "AGENTS.md": "eac0129543e98746577bcc0f74ad0202f341efe4",
+  "CLAUDE.md": "eac0129543e98746577bcc0f74ad0202f341efe4",
+  "README.md": "7f9da1d0b3a80735d5822218dcb64e01f2eac63f",
+  "docs/review-0.2.md": "0d31fe27ce630644c22fab0c7ece500684383b1b"
+ },
+ "created": "2026-10-14T06:17:55.750Z"
+}

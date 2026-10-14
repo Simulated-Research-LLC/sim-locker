@@ -22,7 +22,7 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 | `src/git.js` | `git(cwd, args, {input, allowFail})` and small helpers. `allowFail` returns null instead of throwing |
 | `src/merge-record.js` | `mergeKeys`, `mergeJson`, `mergeFrontmatter`, `mergeRecordFiles` (the git entry point) |
 | `src/mcp.js` | `buildServer(cwd)`: ten tools over the core |
-| `docs/review-0.1.md` | the adversarial review of the first build and the fix status of every finding; the attack list to rerun after any change to `accept`, `save` or the lease |
+| `docs/review-0.1.md`, `docs/review-0.2.md` | the adversarial reviews (the first build, and the rerun against 0.2.6) with the fix status of every finding; the attack list to rerun after any change to `accept`, `save`, `update` or the lease, and the record of the last rerun |
 | `bin/sl.js` | argument parsing and plain-text printing only; no logic |
 | `.github/workflows/test.yml` | the suite on both operating systems on every push |
 | `bin/sl-guard.js`, `.github/workflows/guard-main.yml` | the tripwire on pushes to main: fails and opens an issue on a forced push or a commit that bypassed the tool |
