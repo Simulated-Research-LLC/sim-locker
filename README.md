@@ -90,7 +90,7 @@ The lease lives on the branch `locker/lease`, not a custom ref, because some pro
 
 ## A project's own gates
 
-Projects with their own checks keep them. Two settings in `locker.json`:
+Projects with their own checks keep them. Two settings in `locker.json` (this repo's own `locker.json` names `node --test test/locker.test.js test/merge-record.test.js` as its gate, so every acceptance here runs those two files on the exact commit in a clean checkout, whatever the acceptor ran by hand; `test/mcp.test.js` is left out because it needs the MCP SDK from `node_modules`, which a clean checkout does not have, and CI runs it on every push):
 
 ```json
 "accept": {
@@ -115,8 +115,10 @@ Each line is one save on the truth branch as the remote had it at the last fetch
 The question a truth store has to answer is whether the remote alone is enough to get the project back. `sl drill` asks it: it fetches (and refuses with `NOT_BACKED_UP` when the remote cannot be asked, since a drill from a stale tracking ref proves nothing), pushes the remote truth branch to a fresh bare repository (the "second remote", standing in for a USB stick or a new host), clones from that with plain git and no Sim Locker, checks that the clone is at that commit and that `locker.json` is on it, reports how many record files are under `locker/` there, and runs the project's tests in that clone with `SL_DRILL_COMMIT` set to the commit. The test command comes from `drill.test` in `locker.json` (the same shape as `accept.gate`: a list, no shell, so on Windows `node --test` and not `npm test`, since `npm.cmd` cannot be started without one; `drill.timeoutSeconds`, 1 to 86400, default 900) or from the command line after `--` (the `--` is needed: options before it belong to `sl`, and an unknown one is refused rather than dropped). The two drill settings are read from the `locker.json` on the exact commit being restored, after the drill's own fetch, so a setting that reached the truth branch a minute ago applies, and one added on a slice applies after that slice is accepted. With neither, the drill restores and checks and says it ran no tests.
 
 ```json
-"drill": { "test": ["node", "--test"] }
+"drill": { "test": ["node", "--test", "test/locker.test.js", "test/merge-record.test.js"] }
 ```
+
+(This repo's own setting. A plain clone has no `node_modules`, so the MCP test, which needs the SDK, is not part of the drill; it runs in CI.)
 
 ```
 sl drill                        # restore from a second remote and run drill.test there

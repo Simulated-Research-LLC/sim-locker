@@ -6,7 +6,7 @@ import { z } from "zod";
 import * as L from "./locker.js";
 
 export function buildServer(cwd = process.cwd()) {
-  const server = new McpServer({ name: "sim-locker", version: "0.2.11" });
+  const server = new McpServer({ name: "sim-locker", version: "0.2.12" });
   const wrap = (fn) => async (args) => {
     try {
       const repo = await L.openRepo(cwd);
