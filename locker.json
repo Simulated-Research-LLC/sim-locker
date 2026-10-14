@@ -27,5 +27,12 @@
       "node",
       "--test"
     ]
+  },
+  "accept": {
+    "gate": [
+      "node",
+      "--test"
+    ],
+    "gateTimeoutSeconds": 600
   }
 }

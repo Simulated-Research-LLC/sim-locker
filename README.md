@@ -90,7 +90,7 @@ The lease lives on the branch `locker/lease`, not a custom ref, because some pro
 
 ## A project's own gates
 
-Projects with their own checks keep them. Two settings in `locker.json`:
+Projects with their own checks keep them. Two settings in `locker.json` (this repo's own `locker.json` names `node --test` as its gate, so every acceptance here runs the suite on the exact commit in a clean checkout, whatever the acceptor ran by hand):
 
 ```json
 "accept": {
