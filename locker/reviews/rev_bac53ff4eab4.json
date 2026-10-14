@@ -1,0 +1,27 @@
+{
+ "id": "rev_bac53ff4eab4",
+ "kind": "review",
+ "range": {
+  "from": "eeaf16a9009353c6decd0891655f616c84597d4f",
+  "to": "31ac804d7e8f8f85e9d3f81ccade591a1655fd8c"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Fresh-context review of 0.2.11 (slice/ci-tests, head 31ac804), second round after the README fixes. Checked: gh run list shows run 38518372440 on 31ac804 with test (ubuntu-latest) and test (windows-latest) both success, as were 38517707450 on 76fc616 and 38517337204 on 93816ca; the first run 38516669000 on 8d9a529 failed tests 10, 11, 16, 23, 29 on Windows only. The README sentence now matches that log: it names 38516669000 as the failing first run, the five failures as test code (a PATH with no git, the test's own unquoted driver line, a file URL turned into a path the Linux way, a 5 s bound, and the cascade from test 10 into the guard test), and init's forward slashes as harmless and proven by 38517337204, where test 10 ran init's installed driver through a real merge on Windows. docs/errata.md carries the wrong culprit named in 93816ca's message. The workflow has no global git identity step now; npm test passes 29 locally on this head (and passed 29 with no global identity on the previous head), and both CI jobs pass without it, so no test needed it. Test 10's cleanup is in a finally with a merge --abort that tolerates a finished merge, so a failure there leaves main as it was for test 11. npm ci installs 95 packages from the lockfile on both runners; npm run lines prints 1132 on both and locally; no em dash in the diff since main; 0.2.11 in package.json, package-lock.json and src/mcp.js. The workflow runs on every branch including main beside guard-main.yml, which is fine. Polish, no fix needed: the README paragraph now says Asserted: twice in a row (the first introduces the setup, not an assertion); npm run lines only prints the count and never fails the job above 1500; the 20 s drill bound proves the drill did not wait the minute while code 124 and killed after 1 s prove the kill at the timeout.",
+ "cited": {
+  ".github/workflows/test.yml": "84a68108aa7222b0a023e02bd4974c20602f4ee5",
+  "AGENTS.md": "3d78d14c579ee74e717c1ae7673a83a8fea053c5",
+  "CLAUDE.md": "3d78d14c579ee74e717c1ae7673a83a8fea053c5",
+  "README.md": "2208ff091138547eaabcb3fb3e5efeab50d871ee",
+  "docs/errata.md": "9e2c5b4c4dd3a82cd54db1f484296b361f4bd2c6",
+  "package-lock.json": "e6a978e38390b60bd1fd4a4309bd4b939a013194",
+  "package.json": "db4bf816c569513fc1b5518a75199b7a477b9273",
+  "src/locker.js": "96fa4a349a8febc81afb6453d22fdfcf884021b2",
+  "src/mcp.js": "4866a513e680ff2d4499c0a8e401e3638ace8089",
+  "test/locker.test.js": "cb49e3d2e61b2e6d47dfce368b488e5070254133",
+  "test/merge-record.test.js": "162d8cf965c0ac7ad820d12ac6d951db51c16f71"
+ },
+ "created": "2026-10-14T05:51:56.811Z"
+}
