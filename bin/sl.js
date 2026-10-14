@@ -2,7 +2,7 @@
 // sl: the Sim Locker command line. Four words: saved, backed up, accepted, live. Every command prints what it did and the evidence.
 // Printing only; every decision is in src/locker.js.
 import { parseArgs } from "node:util";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import * as L from "../src/locker.js";
 import { git } from "../src/git.js";
@@ -20,6 +20,8 @@ const COMMANDS = {
   accept: { group: "accepted", usage: 'sl accept <slice> --review <id> [-m "<message>"] [--confirm <token>]', what: "put the reviewed slice on the truth branch as one commit, under the lease; two steps", options: ["--review <id>      the review record saved in the slice (required)", "-m, --message      the message for the accepted commit", "--confirm <token>  the token the first step printed (10 minutes)"], example: "sl accept slice/boss-hp --review rev_1a2b3c4d5e6f" },
   revert: { group: "accepted", usage: "sl revert <commit> [--confirm <token>]", what: "a new save that undoes one; two steps; agents do it on a slice", options: ["--confirm <token>  the token the first step printed"], example: "sl revert 1a2b3c4" },
   live: { group: "live", usage: "sl live <commit>", what: "record that this commit is what people use (a record, then sl save it)", options: [], example: "sl live 1a2b3c4" },
+  history: { group: "live", usage: "sl history [-n <count>]", what: "the truth branch's last saves: who made each, and for an acceptance the slice, the review and its reviewer", options: ["-n <count>   how many (default 20)"], example: "sl history -n 5" },
+  version: { group: "setup", usage: "sl version", what: "this Sim Locker's version", options: [], example: "sl version" },
   find: { group: "live", usage: "sl find <words>", what: "search the review and live records", options: [], example: "sl find boss hp" },
   drill: { group: "the drill", usage: "sl drill [--keep] [--dir <d>] [-- <test command...>]", what: "restore drill: the truth branch to a fresh bare repo, cloned back with plain git, the tests run there", options: ["--keep       keep the two folders to look at", "--dir <d>    put them in this new or empty folder", "-- <cmd...>  another test command this once"], example: "sl drill -- node --test" },
   init: { group: "setup", usage: "sl init [--project <name>] [--truth main] [--remote origin]", what: "make this clone managed: writes locker.json and says what to do next", options: ["--project <name>  the project name (default: the folder name)", "--truth <branch>  the truth branch (default main)", "--remote <name>   the remote (default origin)"], example: "sl init --project old-winds" },
@@ -41,7 +43,7 @@ function help(name) {
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true, strict: false,
-  options: { json: { type: "boolean" }, "no-fetch": { type: "boolean" }, message: { type: "string", short: "m" }, slice: { type: "string" }, verdict: { type: "string" }, findings: { type: "string", short: "f" }, review: { type: "string" }, confirm: { type: "string" }, keep: { type: "boolean" }, dir: { type: "string" }, project: { type: "string" }, truth: { type: "string" }, remote: { type: "string" }, help: { type: "boolean", short: "h" } },
+  options: { json: { type: "boolean" }, "no-fetch": { type: "boolean" }, message: { type: "string", short: "m" }, slice: { type: "string" }, verdict: { type: "string" }, findings: { type: "string", short: "f" }, review: { type: "string" }, confirm: { type: "string" }, keep: { type: "boolean" }, dir: { type: "string" }, n: { type: "string" }, project: { type: "string" }, truth: { type: "string" }, remote: { type: "string" }, help: { type: "boolean", short: "h" } },
 });
 const [cmd, ...args] = positionals;
 
@@ -64,6 +66,7 @@ function plain(o) {
     return lines.join("\n");
   }
   if (o && o.confirmRequired) return o.message;
+  if (o && o.rows) return [`${o.truth}, newest first`, ...o.rows.map((r) => `${r.commit}  ${r.at.slice(0, 16).replace("T", " ")}  ${r.kind.padEnd(16)} ${r.actor ?? "?"}${r.slice ? `  ${r.slice}  ${r.review} (${r.verdict ?? "?"} by ${r.reviewer ?? "?"})` : ""}  ${r.subject}`)].join("\n");
   const scalar = ([, v]) => v !== undefined && (typeof v !== "object" || (Array.isArray(v) && v.every((x) => typeof x === "string")));
   return Object.entries(o).filter(scalar).filter(([k]) => k !== "hits").map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(k === "wrote" ? "\n       " : ", ") : v}`).join("\n") + (o.hits ? `\n${o.hits.map((h) => `${h.kind} ${h.id} ${h.verdict ?? ""} ${h.path}`).join("\n")}` : "") + (o.lease ? `\nlease: ${JSON.stringify(o.lease)}` : "") + (o.truth && typeof o.truth === "object" ? `\ntruth: ${JSON.stringify(o.truth)}` : "") + (o.test && typeof o.test === "object" ? `\ntest: ${o.test.command} exited ${o.test.code}\n${o.test.lastLines}` : "");
 }
@@ -84,11 +87,12 @@ async function main() {
     out({ cloned: target, project: r.config.project, wrote: r.wrote, next: r.next });
     return 0;
   }
+  if (cmd === "version") { const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")); out({ version: pkg.version }); return 0; }
   if (cmd === "init") { const r = await L.init(process.cwd(), { project: opt.project, truth: opt.truth, remote: opt.remote }); out({ managed: r.top, project: r.config.project, truth: r.config.truth, configFrom: r.configFrom, wrote: r.wrote, next: r.next }); return 0; }
   if (!COMMANDS[cmd]) throw new L.LockerError("USAGE", `unknown command "${cmd}"`, { next: "sl help" });
 
   const repo = await L.openRepo(process.cwd());
-  const needActor = !["status", "backup", "pull", "find", "drill"].includes(cmd);
+  const needActor = !["status", "backup", "pull", "find", "drill", "history"].includes(cmd);
   const actor = needActor ? await L.actorFromEnv(repo) : null;
   switch (cmd) {
     case "status": { const s = await L.status(repo, { fetch: !opt["no-fetch"] }); out(s); return s.problems.length ? 2 : 0; }
@@ -105,6 +109,7 @@ async function main() {
     case "revert": { const r = await L.revert(repo, actor, { commit: args[0], confirm: opt.confirm }); out(r); return r.confirmRequired ? 3 : 0; }
     case "live": out(await L.setLive(repo, actor, args[0])); return 0;
     case "find": out(await L.find(repo, args.join(" "))); return 0;
+    case "history": { const h = await L.history(repo, { count: opt.n ? Number(opt.n) : 20 }); out(opt.json ? h : { truth: h.truth, rows: h.rows }); return 0; }
     case "drill": {
       const unknown = Object.keys(opt).filter((k) => !["json", "keep", "dir"].includes(k));   // "sl drill node --test" would run bare node and pass
       if (unknown.length) throw new L.LockerError("USAGE", `unknown option --${unknown[0]}; the test command goes after --`, { next: COMMANDS.drill.example });

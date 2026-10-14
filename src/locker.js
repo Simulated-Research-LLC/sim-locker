@@ -289,6 +289,22 @@ async function accepted(repo) {
   return { reviews, heads };
 }
 
+/** The truth branch's history as Sim Locker sees it: each save on it with who made it, and for an acceptance the slice, the review and
+ *  the reviewer, read from the trailers and the review record at that commit. A commit with no trailer is one made outside the tool. */
+export async function history(repo, { count = 20 } = {}) {
+  const { truth, remote } = repo.config, ref = (await revParse(repo.top, `${remote}/${truth}`)) ?? truth;
+  const log = await git(repo.top, ["log", `-n${count}`, "--format=%H%x00%aI%x00%s%x00%(trailers:key=Locker-Actor,valueonly)%x00%(trailers:key=Locker-Slice,valueonly)%x00%(trailers:key=Locker-Review,valueonly)%x00%(trailers:key=Locker-Session,valueonly)%x1e", ref], { allowFail: true });
+  const rows = [];
+  for (const rec of (log ?? "").split("\x1e")) {
+    const [commit, at, subject, actor, slice, review, session] = rec.split("\0").map((x) => x?.trim());
+    if (!commit) continue;
+    const row = { commit: commit.slice(0, 7), at, subject, actor: actor || null, kind: slice ? "accepted" : actor ? "saved" : "outside the tool", slice: slice || null, review: review || null, session: session || null };
+    if (review) { const text = await git(repo.top, ["show", `${commit}:locker/reviews/${review}.json`], { allowFail: true }); try { const r = JSON.parse(text); row.reviewer = r.reviewer ?? null; row.verdict = r.verdict ?? null; } catch { row.reviewer = null; } }
+    rows.push(row);
+  }
+  return { truth: `${remote}/${truth}`, rows };
+}
+
 /** A review record: the exact range, the reviewer, the findings, and the blob hash of every file it cites, so status can see it go stale. */
 export async function review(repo, actor, { from, to, findings, verdict }) {
   const toSha = await revParse(repo.top, to), fromRef = await revParse(repo.top, from);

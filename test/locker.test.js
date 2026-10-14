@@ -763,3 +763,14 @@ test("suite gaps: a used slice name refused at accept from another clone; the le
   await writeFile(join(G1, ".git", "locker-fetched"), new Date(Date.now() + 3600_000).toISOString() + "\n");
   const f = await L.freshen(repo); assert.equal(f.fetched, true, "a future stamp counts as never fetched, so it fetches");
 });
+
+test("history reads the truth branch's saves and acceptances from the trailers and the records", async () => {
+  const repo = await L.openRepo(A);
+  const h = await L.history(repo, { count: 200 });
+  assert.equal(h.truth, "origin/main");
+  const acc = h.rows.find((r) => r.kind === "accepted");
+  assert.ok(acc, "an acceptance is on main"); assert.match(acc.slice, /^slice\//); assert.match(acc.review, /^rev_/); assert.equal(acc.verdict, "pass"); assert.equal(acc.reviewer, "astra"); assert.equal(acc.actor, "claude (agent)");
+  assert.ok(h.rows.some((r) => r.kind === "saved" && r.actor === "rick (human)"), "a human save on main");
+  assert.equal(h.rows.at(-1).kind, "outside the tool"); assert.equal(h.rows.at(-1).subject, "first");
+  const two = await L.history(repo, { count: 2 }); assert.equal(two.rows.length, 2);
+});
