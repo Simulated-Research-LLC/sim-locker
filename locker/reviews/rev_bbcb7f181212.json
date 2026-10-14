@@ -1,0 +1,17 @@
+{
+ "id": "rev_bbcb7f181212",
+ "kind": "review",
+ "range": {
+  "from": "690bc912db0c000424a6f1cbf5298834ab64c858",
+  "to": "11389c8057c138474e37957243f6f2bb1963c04d"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "README only: the What is tested section rewritten from one paragraph into a list by area. Checked every clause of the new list against test/locker.test.js, test/mcp.test.js and test/merge-record.test.js and against the old paragraph: each clause is asserted by a named test, nothing the paragraph claimed is dropped, and the one misplacement carried over from the paragraph (BAD_SLICE listed under accept while the tests assert it at save, locker.test.js:144-147) is fixed in the second save, which also says the list claims more than the paragraph did: the stale-main slice rule (539-544), the driver's per-key merges and CRLF (merge-record.test.js:9-42), history's crafted subject and bad counts (781, 788) and history over MCP (mcp.test.js:35-37), all tested. No em dash in the diff; npm test 29 pass. Polish, no fix needed: the squash-debris cleaned clause is asserted only indirectly (655-662), as it was before.",
+ "cited": {
+  "README.md": "fd5908ff892f8f9fa93ee2a61cf2cecb4cbfdb19"
+ },
+ "created": "2026-10-14T05:58:44.702Z"
+}
