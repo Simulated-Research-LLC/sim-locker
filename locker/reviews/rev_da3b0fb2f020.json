@@ -1,0 +1,26 @@
+{
+ "id": "rev_da3b0fb2f020",
+ "kind": "review",
+ "range": {
+  "from": "1c7fd610b25824658de7962ed9658ac3a33bd392",
+  "to": "1c87e5060651a3ef2c7c6c4cf22eacabaabb4427"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Adversarial review of sl history and sl version at 1c87e50. Attacked the record split with a subject holding 0x1e bytes and a fake hash (one row, bytes kept in the subject), two Locker-Actor trailers (joined with a comma), a hand-typed acceptance trailer with no record behind it (reviewer and verdict null), a hand-typed actor trailer (listed as saved, which README now says is trusted as written like the guard), a clone with no remote ref yet (truth is main, header says the local branch and nothing backed up), and -n 0, abc, -5, 1.5, 501 and 10000 on the CLI (all USAGE, exit 1); over MCP count 0, 501 and 2.5 are refused by the schema. Eight findings in two rounds (phantom row from 0x1e, truth label wrong without a remote ref, unchecked count answered with an empty list, newline in a joined actor, verdict key missing, README wording on hand-typed trailers, stale nine-tools wording, and the plain header printing undefined because the CLI dropped fetchedAt) are all fixed with tests. npm test 29 pass, npm run lines 1131, no em dash in added lines, version 0.2.9 in package.json, package-lock.json and src/mcp.js, sl version prints it. Scratch work under the session scratchpad history-review folder.",
+ "cited": {
+  "AGENTS.md": "7f595a31ebc2a0859e8338ee04c215adb19d2c5d",
+  "CLAUDE.md": "7f595a31ebc2a0859e8338ee04c215adb19d2c5d",
+  "README.md": "e2b60d6760058df3f42e23a6971685733108a7b4",
+  "bin/sl.js": "e9a6212695d633f82efaa9ca29cb84ac374aabaf",
+  "package-lock.json": "de4f049eaebbb1684524483f01abc67e78ff8124",
+  "package.json": "1897232d7f034e09e322e21aad6888b5997409f0",
+  "src/locker.js": "d1cb009924e0be1ff90288b24de231dd8c541154",
+  "src/mcp.js": "7d9a19651368963a389b4eec120f430aeb6f3207",
+  "test/locker.test.js": "947330ef3e1e057ec6532adf527c60bb6d0d0409",
+  "test/mcp.test.js": "3d4ed3af6d368aa6e4d7bdc602f9961da7d15ec5"
+ },
+ "created": "2026-10-14T05:16:09.224Z"
+}
