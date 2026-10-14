@@ -1,0 +1,26 @@
+{
+ "id": "rev_b364ebc718f5",
+ "kind": "review",
+ "range": {
+  "from": "28e80a4cdd20685d521aa74cc28a6f0c7287eec2",
+  "to": "dea27698ab667e99053b3edd0ac3de7a49ad4d7b"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Adversarial review of 0.2.5 in three rounds, every attack run against real git in scratch copies (bare remote plus clones). Round one found two blocking defects (clean -f left the squash's debris in new folders so the checkout back to the slice failed; settling by keeping the slice's side made save say nothing to save and left the update stuck) and two material ones (a Markdown underline read as a mark; status counted a settled, un-added file as unsettled). Round two found the first fix's per-file parent check let real marks into history and made update abort with an empty GIT error on a conflict in such a file or in a binary file. The third commit fixes all of it: GIT versus conflict decided from the unmerged entries, a per-line parent check, binary and one-sided conflicts named in update, status and the next step, save checks the tree before staging anything, one view for status, save and update. Verified on the final build: setext underline on main with a conflict elsewhere settles and saves with two parents and the underline kept; a conflict in a file whose parents hold the underline is refused MARKERS_LEFT while the marks are in and stages nothing on refusal (both files stay UU), then saves clean; keep-ours saves one merge with MERGE_HEAD gone; modify/delete named, keep or delete then save; a real binary conflict (NUL bytes) named as binary, the chosen copy saved; the failed squash with a file in a new folder and a missing blob leaves main clean and the folder on the slice; a plain save with nothing changed still says nothing to save. npm test 26 pass, npm run lines 1062, no em dash in the diff, 0.2.5 in package.json, package-lock.json and src/mcp.js, every backlog row true against the diff, README and CLAUDE.md sentences true. Left as polish, no code change: status keeps listing a binary conflict as to settle until the save, since the tool cannot tell a chosen copy from the one git left; the MCP test's actor argument is dropped by the zod schema and never read by the handlers, which the test proves by outcome.",
+ "cited": {
+  "AGENTS.md": "96d3ccbaf27883581278863d06c4c166f7e700af",
+  "CLAUDE.md": "96d3ccbaf27883581278863d06c4c166f7e700af",
+  "README.md": "af4e5c2a93150bbb544edc05b14d73a56d5c5272",
+  "docs/backlog.md": "b6bf239924b5764d0962c2a560b95e62cab2a905",
+  "package-lock.json": "7471728813493b258dfd499de3426bf742be5f24",
+  "package.json": "7cbd359fe24fdf0fe37d26dd117e9ff292584945",
+  "src/locker.js": "94c6e4955cbb273cb41a3930d684318dfd7e8231",
+  "src/mcp.js": "677966130aca133c948a6089acbff8d21bda76a8",
+  "test/locker.test.js": "10b69409196ab8b3e92798ab0af028a671f3e3eb",
+  "test/mcp.test.js": "5f588d43db0fc7eeb3f08a31913a9f906b2aeb44"
+ },
+ "created": "2026-10-14T03:50:32.060Z"
+}

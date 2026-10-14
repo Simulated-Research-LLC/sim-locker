@@ -25,7 +25,8 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 | `docs/review-0.1.md` | the adversarial review of the first build and the fix status of every finding; the attack list to rerun after any change to `accept`, `save` or the lease |
 | `bin/sl.js` | argument parsing and plain-text printing only; no logic |
 | `bin/sl-guard.js`, `.github/workflows/guard-main.yml` | the tripwire on pushes to main: fails and opens an issue on a forced push or a commit that bypassed the tool |
-| `test/*.test.js` | temp bare remote plus two clones |
+| `test/*.test.js` | temp bare remote plus two clones; `mcp.test.js` drives the MCP server over an in-memory transport |
+| `docs/backlog.md` | findings not fixed in the slice that found them, with the reason; a review's polish rows go here |
 
 ## Working on it
 
