@@ -185,6 +185,7 @@ docs/audit-0.1.md    the adversarial audit of the first draft
 docs/drills-2026-10-13.md   the restore drill's output on the three managed repos
 docs/backlog.md      findings not fixed in the slice that found them, with the reason
 docs/review-0.1.md   the adversarial review of the first build (block) and what was done about each finding
+docs/review-0.2.md   the rerun of the attack lists against 0.2.6 (nine findings, one blocking) and what 0.2.7 and 0.2.8 did about each
 docs/errata.md       wrong statements in commit messages that history keeps
 docs/reading-rea-and-ghidra.md   what was read before the design, with file:line
 ASTRA_BRIEF.md       the brief for the adversarial review by Codex (Astra) and the adoption steps
