@@ -731,3 +731,35 @@ test("the attacks of 2026-10-14: an edited record, a reused slice name from anot
   await writeFile(join(X, "recs/x.record.json"), '{"a": 1, "b": 5}\n'); await writeFile(join(X, "recs/y.record.json"), '{"k": 2}\n');
   const saved = await L.save(repo, claude, { message: "settled" }); assert.equal(saved.saved, true); assert.equal(sh(X, "rev-list", "--count", "--merges", "slice/recs"), "1");
 });
+
+test("suite gaps: a used slice name refused at accept from another clone; the lease lost during the gate puts the folder back on the slice; a fetch stamp from the future counts as never fetched", async () => {
+  const r8 = join(tmp, "gaps.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", r8);
+  const G1 = join(tmp, "G1"); sh(tmp, "clone", "--quiet", r8, G1); sh(G1, "checkout", "--quiet", "-b", "main");
+  await writeFile(join(G1, "a.md"), "a\n"); sh(G1, "add", "-A"); sh(G1, "commit", "--quiet", "-m", "first"); sh(G1, "push", "--quiet", "-u", "origin", "main");
+  await L.init(G1, { project: "gaps" }); let repo = await L.openRepo(G1);
+  const rick = await L.actorFromEnv(repo, env("rick", "r9")), claude = await L.actorFromEnv(repo, env("claude", "c9")), astra = await L.actorFromEnv(repo, env("astra", "a9"));
+  const cfg = JSON.parse(await readFile(join(G1, "locker.json"), "utf8")); cfg.lease = { ttlMinutes: 0.05 }; cfg.accept = { gate: [process.execPath, "-e", "setTimeout(() => {}, 4000)"] };
+  await writeFile(join(G1, "locker.json"), JSON.stringify(cfg, null, 2) + "\n");
+  await L.save(repo, rick, { message: "manage, with a slow gate and a 3 s lease" }); await L.backup(repo); repo = await L.openRepo(G1);
+  // a name taken on the remote by another clone is refused at accept even when this clone made the branch by hand
+  const G2 = join(tmp, "G2"); sh(tmp, "clone", "--quiet", r8, G2); sh(G2, "checkout", "--quiet", "-b", "done/slice/taken"); sh(G2, "push", "--quiet", "origin", "done/slice/taken");
+  sh(G1, "checkout", "--quiet", "-b", "slice/taken"); await writeFile(join(G1, "b.md"), "b\n"); await L.save(repo, claude, { message: "b" }); await L.backup(repo);
+  const rv = await L.review(repo, astra, { from: "main", to: "slice/taken", verdict: "pass", findings: "ok" }); await L.save(repo, claude, { message: "record" }); await L.backup(repo);
+  await L.lease(repo, claude, "acquire");
+  await rejects(L.accept(repo, claude, { slice: "slice/taken", reviewId: rv.id }), "NAME_TAKEN");
+  await L.lease(repo, claude, "release");
+  // the lease expires during the 4 s gate and another session takes it: the acceptance is refused at the last look, nothing moves, and the folder is back on the slice
+  sh(G1, "checkout", "--quiet", "main"); await writeFile(join(G1, "c.md"), "c\n"); await L.save(repo, claude, { message: "c", slice: "slice/g" }); await L.backup(repo);
+  const rv2 = await L.review(repo, astra, { from: "main", to: "slice/g", verdict: "pass", findings: "ok" }); await L.save(repo, claude, { message: "record" }); await L.backup(repo);
+  await L.lease(repo, claude, "acquire");
+  const first = await L.accept(repo, claude, { slice: "slice/g", reviewId: rv2.id });
+  const other = await L.actorFromEnv(await L.openRepo(G2), env("astra", "elsewhere"));
+  const taker = new Promise((done) => setTimeout(async () => { try { done(await L.lease(await L.openRepo(G2), other, "acquire")); } catch (e) { done(e); } }, 3300));
+  const lost = await rejects(L.accept(repo, claude, { slice: "slice/g", reviewId: rv2.id, confirm: first.token }), "NO_LEASE");
+  assert.match(lost.message, /lost while accepting/); assert.equal((await taker).action, "acquired", "the other session took the expired lease during the gate");
+  assert.equal(sh(G1, "rev-parse", "--abbrev-ref", "HEAD"), "slice/g"); assert.equal(sh(G1, "rev-parse", "main"), sh(G1, "rev-parse", "origin/main"));
+  assert.equal(sh(G1, "--git-dir", r8, "rev-parse", "main"), sh(G1, "rev-parse", "origin/main"), "the remote's main did not move");
+  // a fetch stamp from the future is not fresh
+  await writeFile(join(G1, ".git", "locker-fetched"), new Date(Date.now() + 3600_000).toISOString() + "\n");
+  const f = await L.freshen(repo); assert.equal(f.fetched, true, "a future stamp counts as never fetched, so it fetches");
+});

@@ -144,7 +144,8 @@ function checkSliceName(repo, slice) {
 
 /** The age of the last fetch Sim Locker itself made, or null. FETCH_HEAD is not used: any fetch of any remote touches it. */
 async function lastFetchAge(repo) {
-  try { const s = await stat(join(repo.gitDir, "locker-fetched")); return (Date.now() - s.mtimeMs) / 1000; } catch { return null; }
+  // the time written in the file, not its mtime: a file dated in the future (a clock that was wrong) counts as never fetched, not as fresh
+  try { const at = Date.parse((await readFile(join(repo.gitDir, "locker-fetched"), "utf8")).trim()); const age = (Date.now() - at) / 1000; return Number.isFinite(age) && age >= 0 ? age : null; } catch { return null; }
 }
 
 /** Fetch the heads and the lease ref if the last fetch is older than allowed. Says plainly when it did not fetch. */
