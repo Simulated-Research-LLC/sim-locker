@@ -1,0 +1,21 @@
+{
+ "id": "rev_f7b7a96fcf8b",
+ "kind": "review",
+ "range": {
+  "from": "b48503ad94fa442ee8c1df42e36137ecaf38f4f3",
+  "to": "cf2034c89331a6d5f2c533edcdb675e0dbe0964b"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Fresh-context review of 0.2.10. Checked: package.json and package-lock.json both carry 0.2.10 and the same three bins (sl, simlocker, sl-mcp all pointing at bin/sl.js); the lockfile regenerated in a scratch copy with npm install --package-lock-only is byte for byte the same, so npm will not rewrite it; src/mcp.js and sl version say 0.2.10; npm test 29 pass with zero sl-drill folders under the system temp folder before and after the run; npm run lines 1131; no em dash in the diff. The README's Windows sentence holds by how npm writes its shims (a .cmd for cmd.exe, a .ps1 for PowerShell, a POSIX script for Git Bash) and by PowerShell resolving aliases before external commands, so sl is Set-Location there and simlocker is the name to use; this is reasoned from npm's behaviour, not run on Windows. One material finding was found and fixed in cf2034c: the comment added on line 450 of test/locker.test.js had swallowed the two asserts on a failed drill's exit code and restored commit; they are on their own line again and pass.",
+ "cited": {
+  "README.md": "ad3e2ddfd8efc0bfc22dd45cc0165de42925dc11",
+  "package-lock.json": "fb0a2f55ab805d8459675ef06add927905b3fdea",
+  "package.json": "a0a070866e6f16da3279f64bccb12c9e00b91986",
+  "src/mcp.js": "f386bce7611393723b848066c8f8c8774e01c72f",
+  "test/locker.test.js": "2dfd38e5acb6303655679f0550271010b00b6591"
+ },
+ "created": "2026-10-14T05:25:14.233Z"
+}
