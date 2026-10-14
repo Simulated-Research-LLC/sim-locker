@@ -25,13 +25,17 @@
   "drill": {
     "test": [
       "node",
-      "--test"
+      "--test",
+      "test/locker.test.js",
+      "test/merge-record.test.js"
     ]
   },
   "accept": {
     "gate": [
       "node",
-      "--test"
+      "--test",
+      "test/locker.test.js",
+      "test/merge-record.test.js"
     ],
     "gateTimeoutSeconds": 600
   }
