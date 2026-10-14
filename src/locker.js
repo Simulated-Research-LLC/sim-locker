@@ -383,15 +383,16 @@ export async function status(repo, { fetch = true } = {}) {
   const slice = await sliceState(repo, branch);
   const ab = await aheadBehind(repo.top, branch, `${remoteName}/${branch}`);
   const reviews = (await listRecords(repo, "reviews")).map((r) => ({ id: r.id, verdict: r.verdict, reviewer: r.reviewer, to: r.range?.to }));
-  // a review stays current when the only save after the head it covers added the record itself
-  // a review stays current over the saves accept allows after the reviewed head: added review records, and the project's trailing files
-  const trailing = repo.config.accept.trailing.map(globToRegExp), covered = new Set([slice.head]);
+  // a review stays current over the saves accept allows after the reviewed head: added review records and the project's trailing files,
+  // read the way accept reads them (no rename detection, an added record is A), and never across a save with two parents
+  const trailing = repo.config.accept.trailing.map(globToRegExp), covered = new Set([slice.head]), stale = new Set((await staleReviews(repo)).map((s) => s.id));
   for (let h = slice.head, n = 0; h && n < 20; n++) {
-    const files = ((await git(repo.top, ["show", "--name-only", "--format=", h], { allowFail: true })) ?? "").split("\n").filter(Boolean);
-    if (!files.length || !files.every((f) => /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(f) || (!NEVER_TRAILING.test(f) && trailing.some((re) => re.test(f))))) break;
+    if (((await git(repo.top, ["rev-list", "--parents", "-n", "1", h], { allowFail: true })) ?? "").split(" ").length !== 2) break;
+    const changes = ((await git(repo.top, ["show", "--name-status", "--no-renames", "--format=", h], { allowFail: true })) ?? "").split("\n").filter(Boolean).map((l) => { const [st, f] = l.split("\t"); return { st, f }; });
+    if (!changes.length || !changes.every(({ st, f }) => (st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(f)) || (!NEVER_TRAILING.test(f) && trailing.some((re) => re.test(f))))) break;
     h = await revParse(repo.top, `${h}~1`); if (h) covered.add(h);
   }
-  const onTruth = branch === truthName, passed = reviews.find((r) => covered.has(r.to) && r.verdict === "pass");
+  const onTruth = branch === truthName, passed = reviews.find((r) => covered.has(r.to) && r.verdict === "pass" && !stale.has(r.id));
   let step;
   if (branch === "HEAD") step = `not on a branch: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName})`;
   else if (onTruth && truth.stale) step = dirty.length ? `${truthName} is behind and ${dirty.length} file(s) not saved: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName}), then sl pull` : `${truthName} is behind: sl pull first`;
@@ -399,7 +400,7 @@ export async function status(repo, { fetch = true } = {}) {
   else if (!slice.backedUp) step = `saved, not backed up: sl backup`;
   else if (onTruth) step = slice.live.applies && slice.live.commit !== slice.head ? `${truthName} is backed up; when this version is what people use: sl live ${slice.head.slice(0, 7)}` : `nothing waiting; ${truthName} is backed up`;
   else if (slice.accepted) step = `accepted as ${slice.accepted.slice(0, 7)} on ${truthName}; nothing waiting on this slice`;
-  else if (passed) step = `reviewed (${passed.id}, pass); to accept: sl lease acquire, then sl accept ${branch} --review ${passed.id}`;
+  else if (passed) step = `reviewed (${passed.id}, pass); to accept: ${myLease ? "" : "sl lease acquire, then "}sl accept ${branch} --review ${passed.id}`;
   else step = `backed up, not reviewed: a different actor runs ${reviewCmd}, then sl save the record and sl accept ${branch} --review <id>`;
   next.push({ step });
   return { project: repo.config.project, path: repo.top, remote: repo.remoteUrl, configFrom: repo.configFrom, freshness, problems, next, truth: { branch: truthName, ...truth }, current: { ...slice, onTruth, ahead: ab.ahead, behind: ab.behind, uncommitted: dirty }, lease: cur ? { ...cur, mine: myLease } : null, reviews };
