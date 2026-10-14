@@ -313,14 +313,18 @@ test("accept.trailing lets a configured record file change after the review; acc
   await writeFile(join(A, "ledger/rows.md"), "| v | outcome |\n| 1 | feature |\n| 1 | again |\n"); await L.save(repo2, claude, { message: "another row" });
   await L.backup(repo2); await L.lease(repo2, claude, "acquire");
   assert.match((await L.status(repo2)).next.at(-1).step, /^reviewed \(/, "a trailing-file save after the review keeps the slice reviewed in status, as accept allows it");
-  // what accept refuses, status does not call reviewed: a file renamed into locker/reviews/ after the review, and a save with two parents
-  sh(A, "mv", "feature.txt", "locker/reviews/rev_000000000001.json"); await L.save(repo2, claude, { message: "sneak" });
-  assert.match((await L.status(repo2)).next.at(-1).step, /^saved, not backed up|^backed up, not reviewed/, "a rename into the records folder is not an added record");
-  sh(A, "reset", "--quiet", "--hard", "HEAD~1");
-  const W = join(tmp, "W"); sh(tmp, "clone", "--quiet", remote, W); await writeFile(join(W, "ledger/other.md"), "| v | outcome |\n| 9 | from main |\n"); sh(W, "add", "-A"); sh(W, "commit", "--quiet", "-m", "main row"); sh(W, "push", "--quiet", "origin", "main"); await rm(W, { recursive: true });
-  assert.equal((await L.update(repo2, claude, {})).updated, true);
-  assert.match((await L.status(repo2)).next.at(-1).step, /^saved, not backed up/, "a save with two parents ends the walk: what main brought in is unreviewed");
-  sh(A, "reset", "--quiet", "--hard", "HEAD~1"); await L.pull(repo2);   // the slice as it was, and the local main caught up with the remote
+  // what accept refuses, status does not call reviewed: a file renamed into locker/reviews/ after the review, and a save with two parents.
+  // each case on its own slice off slice/gated, reviewed and backed up first so the step reads "reviewed", then broken
+  for (const [name, breakIt] of [["slice/walk-rename", async () => { sh(A, "mv", "feature.txt", "locker/reviews/rev_000000000001.json"); await L.save(repo2, claude, { message: "sneak" }); }],
+                                 ["slice/walk-merge", async () => { const W = join(tmp, "W"); sh(tmp, "clone", "--quiet", remote, W); await writeFile(join(W, "ledger/other.md"), "| 9 | from main |\n"); sh(W, "add", "-A"); sh(W, "commit", "--quiet", "-m", "main row"); sh(W, "push", "--quiet", "origin", "main"); await rm(W, { recursive: true }); assert.equal((await L.update(repo2, claude, {})).updated, true); }]]) {
+    sh(A, "checkout", "--quiet", "-b", name); await L.backup(repo2);
+    await L.review(repo2, astra, { from: "main", to: name, verdict: "pass", findings: "fine" }); await L.save(repo2, claude, { message: "record" }); await L.backup(repo2);
+    assert.match((await L.status(repo2)).next.at(-1).step, /^reviewed \(rev_/);   // both slices' reviews cover the same head, so either id may be named
+    await breakIt(); await L.backup(repo2);
+    assert.match((await L.status(repo2)).next.at(-1).step, /^backed up, not reviewed/, `${name}: what accept refuses, status does not call reviewed`);
+    sh(A, "checkout", "--quiet", "slice/gated");
+  }
+  await L.pull(repo2);   // the local main caught up with the remote (the merge case moved it)
   let first = await L.accept(repo2, claude, { slice: "slice/gated", reviewId: rv.id });
   assert.equal(first.confirmRequired, true); assert.match(first.gate, /gate\.js will run/);
   // the gate runs at the confirm step, on the committed tree: gate-block is in it, so it refuses with its own words
