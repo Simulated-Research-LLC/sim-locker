@@ -1,0 +1,24 @@
+{
+ "id": "rev_21dda7eaf931",
+ "kind": "review",
+ "range": {
+  "from": "9ee123ddd251e71731ebddc65aadc2c7fea43241",
+  "to": "33d55f0aecc872d81f128c46bc563b75f12e80e4"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Reviewed 0.2.12 (slice/own-gate at 33d55f0) in a fresh context. The first head named node --test as this repo's gate and drill test; measured in a worktree outside the repo and in a plain drill clone, that fails test/mcp.test.js with ERR_MODULE_NOT_FOUND for @modelcontextprotocol/sdk (27 pass, 1 fail), and passed at the gate's real location under .git only because Node walked up into the acceptor's node_modules, against README's clean checkout wording; the drill of this repo had failed the same way since 0.2.5, when the MCP test came in. Both fixed on this head: gate and drill.test run test/locker.test.js and test/merge-record.test.js. Verified: those two files in a detached worktree with no node_modules give 27 pass in 34.7 s (gateTimeoutSeconds 600 leaves wide room); sl drill of main with that command form passes, 27 pass; checkConfig accepts locker.json; npm test on the head is 29 pass; CI runs npm ci then npm test so the MCP test is still covered; the three README and docs sentences say exactly this, and since 0.2.5 is right (0e59695 added the test). The ten claims in ASTRA_BRIEF.md each match a function in src/locker.js (openRepo and truthState, accept, lease with force-with-lease, backup's remoteRef compare, actorFromEnv, ACCEPT_CONFLICT and MARKERS_LEFT, status, history, drill); every name in the attack list exists; the record path and the astra actor are valid; 0.2.12 is in package.json, package-lock.json and src/mcp.js; no em dash in the diff. Nothing blocks.",
+ "cited": {
+  "ASTRA_BRIEF.md": "37dc66426f73456ca853683c702d17730998d4d5",
+  "README.md": "e33177d7580375f8657790d9a76be284b23ac6cb",
+  "docs/backlog.md": "3c6faf71917391a82edd85f0b9199db681ec643d",
+  "docs/errata.md": "4ed50555c066e09d3c5de04ba8e6c0b4d2ed8313",
+  "locker.json": "9dabd3b988d81ae41079b283ceef8c2b7a2aaaa3",
+  "package-lock.json": "8e00b9fd9454e5f95e3e9848d29f8252c85972af",
+  "package.json": "70fd36b3a3e4bfcb46afa9ecb22e566f75d12e1f",
+  "src/mcp.js": "23f4e13e0ba18fb8b37aa5bb98d3b2ebb76446e9"
+ },
+ "created": "2026-10-14T06:12:26.417Z"
+}
