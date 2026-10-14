@@ -1,7 +1,7 @@
 // End to end against real git: a bare remote standing in for GitHub, two clones standing in for two machines or two sessions.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, readFile, mkdir, readdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, mkdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -555,6 +555,10 @@ test("a slice that changed the same lines as the truth branch is refused at acce
   sh(E, "checkout", "--quiet", "--detach"); await rejects(L.update(repo, claude, {}), "DETACHED"); sh(E, "checkout", "--quiet", "slice/c");
   await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT").then((x) => { assert.deepEqual(x.details.files, ["notes.md"]); assert.match(x.next, /keep the lines you want/); });
   let st = await L.status(repo); assert.ok(st.problems.some((p) => p.startsWith("UPDATE WAITING: an update left 1 file")), st.problems.join("|"));
+  // settled in the editor and not yet added: status no longer counts it (save's add -A will take it)
+  const marked = await readFile(join(E, "notes.md"), "utf8"); await writeFile(join(E, "notes.md"), "line one, settled in the editor\n");
+  st = await L.status(repo); assert.ok(st.problems.some((p) => p === "UPDATE WAITING: an update is settled but not yet saved"), st.problems.join("|"));
+  await writeFile(join(E, "notes.md"), marked);
   await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT");
   assert.match(await readFile(join(E, "notes.md"), "utf8"), /<<<<<<< HEAD[\s\S]*>>>>>>> origin\/main/, "the marks name the sides by name");
   // saving with the marks still in the file is refused; so is saving with the file still unmerged
@@ -562,7 +566,7 @@ test("a slice that changed the same lines as the truth branch is refused at acce
   assert.equal(sh(E, "rev-list", "--count", "--merges", "slice/c"), "0", "nothing was saved");
   await writeFile(join(E, "notes.md"), "<<<<<<< HEAD\nstill marked\n");
   sh(E, "add", "notes.md"); await rejects(L.save(repo, claude, { message: "oops" }), "MARKERS_LEFT");
-  st = await L.status(repo); assert.ok(st.problems.some((p) => p === "UPDATE WAITING: an update left 1 file(s) with lines to settle: notes.md"), "status and save agree while a mark is staged: " + st.problems.join("|"));
+  st = await L.status(repo); assert.ok(st.problems.some((p) => p === "UPDATE WAITING: an update left 1 file(s) to settle: notes.md"), "status and save agree while a mark is staged: " + st.problems.join("|"));
   await writeFile(join(E, "notes.md"), "line one, both ways\n"); sh(E, "add", "notes.md");
   st = await L.status(repo); assert.ok(st.problems.some((p) => p === "UPDATE WAITING: an update is settled but not yet saved"), st.problems.join("|"));
   // during an update a save takes everything on this branch: paths or another slice are refused before anything moves
@@ -597,4 +601,37 @@ test("a slice that changed the same lines as the truth branch is refused at acce
   await writeFile(join(E, "mine.md"), "m\n"); await L.save(repo, claude, { message: "mine", slice: "slice/d" });
   const up = await L.update(repo, claude, {}); assert.equal(up.updated, true); assert.equal(sh(E, "show", "HEAD:other.md"), "o");
   assert.match(sh(E, "log", "-1", "--format=%B"), /Locker-Actor: claude/);
+});
+
+test("an update settled by keeping the slice's side is still saved; a Markdown underline is not a mark; a one-sided conflict is named; squash debris in new folders is cleaned", async () => {
+  const r5 = join(tmp, "polish.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", r5);
+  const P = join(tmp, "P"); sh(tmp, "clone", "--quiet", r5, P); sh(P, "checkout", "--quiet", "-b", "main");
+  await writeFile(join(P, "readme.md"), "# demo\n"); await writeFile(join(P, "doc.md"), "Intro\n"); await writeFile(join(P, "gone.md"), "g\n");
+  sh(P, "add", "-A"); sh(P, "commit", "--quiet", "-m", "first"); sh(P, "push", "--quiet", "-u", "origin", "main");
+  await L.init(P, { project: "polish" }); const repo = await L.openRepo(P);
+  const rick = await L.actorFromEnv(repo, env("rick", "r6")), claude = await L.actorFromEnv(repo, env("claude", "c6")), astra = await L.actorFromEnv(repo, env("astra", "a6"));
+  await L.save(repo, rick, { message: "manage" }); await L.backup(repo);
+  await writeFile(join(P, "readme.md"), "# demo slice\n"); await writeFile(join(P, "gone.md"), "kept here\n"); await L.save(repo, claude, { message: "slice", slice: "slice/a" });
+  const Q = join(tmp, "Q"); sh(tmp, "clone", "--quiet", r5, Q);
+  await writeFile(join(Q, "readme.md"), "# demo main\n"); await writeFile(join(Q, "doc.md"), "Section\n=======\nIntro\n"); sh(Q, "rm", "-q", "gone.md");
+  sh(Q, "commit", "--quiet", "-am", "main moves"); sh(Q, "push", "--quiet", "origin", "main");
+  const c = await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT");
+  assert.deepEqual(c.details.files.sort(), ["gone.md", "readme.md"]); assert.match(c.message, /gone\.md changed on one side and deleted on the other/); assert.match(c.next, /keep the file or delete it/);
+  let st = await L.status(repo); assert.ok(!st.problems.join("|").includes("doc.md"), "the underline in doc.md is content, not a mark: " + st.problems.join("|"));
+  // keep the slice's side of readme.md (the tree then equals HEAD for that file), keep gone.md: the save still finishes the update
+  await writeFile(join(P, "readme.md"), "# demo slice\n");
+  const saved = await L.save(repo, claude, { message: "keep ours" }); assert.equal(saved.saved, true);
+  assert.equal(sh(P, "rev-list", "--count", "--merges", "slice/a"), "1"); assert.equal(await readFile(join(P, "gone.md"), "utf8"), "kept here\n");
+  await assert.rejects(stat(join(P, ".git", "MERGE_HEAD")), "the update is finished");
+  assert.equal(sh(P, "show", "HEAD:doc.md"), "Section\n=======\nIntro");
+  // a failed squash whose debris sits in a new folder: cleaned, and the folder goes back to the slice
+  await mkdir(join(P, "sub", "deeper"), { recursive: true }); await writeFile(join(P, "sub", "deeper", "new.md"), "n\n"); await writeFile(join(P, "lost.md"), "soon\n");
+  await L.save(repo, claude, { message: "deep", slice: "slice/deep" }); await L.backup(repo); await L.pull(repo);
+  const rv = await L.review(repo, astra, { from: "main", to: "slice/deep", verdict: "pass", findings: "ok" });
+  await L.save(repo, claude, { message: "record" }); await L.backup(repo); await L.lease(repo, claude, "acquire");
+  const blob = sh(P, "rev-parse", "slice/deep~1:lost.md"); await rm(join(P, ".git", "objects", blob.slice(0, 2), blob.slice(2)));
+  const t = await L.accept(repo, claude, { slice: "slice/deep", reviewId: rv.id });
+  await rejects(L.accept(repo, claude, { slice: "slice/deep", reviewId: rv.id, confirm: t.token }), "GIT");
+  assert.equal(sh(P, "rev-parse", "--abbrev-ref", "HEAD"), "slice/deep"); assert.equal(sh(P, "rev-parse", "main"), sh(P, "rev-parse", "origin/main"));
+  await L.lease(repo, claude, "release");
 });
