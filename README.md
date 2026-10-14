@@ -142,7 +142,7 @@ Claude Code config, for example:
 
 Also: a slice name taken on the remote by another clone refused at accept; the lease expiring during a slow gate and taken by another session, so the acceptance is refused at its last look with the remote's `main` unmoved and the folder back on the slice; a fetch stamp dated in the future read as never fetched.
 
-Not in the suite: two actors racing for the lease in the same instant (held under six racing clones in the 0.1 review and again in the 2026-10-14 rerun, three rounds each; those runs are the reviewers', not reproduced here), REVIEW_RANGE, PUSH_REFUSED, DIVERGED, LEASE_RACE.
+Not in the suite: two actors racing for the lease in the same instant (held under six racing clones in the 0.1 review and again in the 2026-10-14 rerun, three rounds each; those runs are the reviewers', not reproduced here), REVIEW_RANGE, PUSH_REFUSED at accept (backup's is tested), DIVERGED, LEASE_RACE, LEASE_NOT_MINE.
 
 ## Files
 
