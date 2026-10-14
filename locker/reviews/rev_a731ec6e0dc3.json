@@ -1,0 +1,23 @@
+{
+ "id": "rev_a731ec6e0dc3",
+ "kind": "review",
+ "range": {
+  "from": "78f2363f93e6638ff01c645cff06e57966e5d566",
+  "to": "cca084888bec499b89190f8f715d773ee991a55f"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Adversarial review of 0.2.13 (gate-lease) in a fresh context, read-only. The lease is renewed before and after the gate, and a gate whose timeout is longer than the lease is refused at load only when a gate is set. First pass found three material problems, all fixed in cca0848: a gate-less project with a lease under 15 minutes could not open (default timeout 900 held against the lease), the lease could run out between the gate and the last look (replayed with a 3 s lease and no taker: unloaded accepted with about 200 ms to spare, under 8 CPU burners refused NO_LEASE with the lease expired and still claude's, 6 of 6), and the takeover test passed for that reason rather than the takeover it describes. After the fix the same replay is accepted unloaded (3 of 3) and under 8 burners (3 of 3) with the lease still live at the end; the test now uses a 1 minute lease, asserts 61 s refused and a gate-less ttl 1 accepted, and after the raw-git takeover at 1.5 s asserts LEASE_HELD naming astra (session elsewhere) and lease status owner astra, folder on the slice, remote main unmoved. npm test 29 of 29 three times (and the suite-gaps test twice more under load), 1134 lines, no em dash in README, backlog, src or test, 0.2.13 in package.json, package-lock.json and src/mcp.js. Old Winds (1800 s gate at 30 min, equal), Percept (no gate) and sim-locker (600 s) configs load. A renew refusal before the gate lands after the confirm token is spent, same as GATE_FAILED, nothing moved; polish only. Polish left: the closing brace and const was on one line in accept, and the test's save message still says 3 s lease.",
+ "cited": {
+  "README.md": "f2fcf8d4e0efadc918a49351a5b80754c5c11f36",
+  "docs/backlog.md": "27dae4a700bf0f9a8dbfdc8b98b06a435c5ff2a5",
+  "package-lock.json": "3485bf8559d5d983c5bf62edc65dbffaa64116c8",
+  "package.json": "d78228a2370e7f05d1e1aefbaa1a0f8b5409a078",
+  "src/locker.js": "d756d7f5b8fdb68dd8678cf1e50667ffe6ea71b8",
+  "src/mcp.js": "65518b7b154c07c6d4e1f8e2fbe7adf509aad23a",
+  "test/locker.test.js": "55b62f784f03090b179953f46d25d15ce860bea6"
+ },
+ "created": "2026-10-14T06:40:13.988Z"
+}
