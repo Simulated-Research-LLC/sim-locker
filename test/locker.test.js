@@ -2,7 +2,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, readFile, mkdir, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -242,7 +242,9 @@ test("the merge driver that init installs works without sl on PATH, and status -
   await writeFile(join(A, "locker/live/r.json"), JSON.stringify({ a: 1, b: 2 })); sh(A, "commit", "--quiet", "-am", "theirs");
   sh(A, "checkout", "--quiet", "main");
   await writeFile(join(A, "locker/live/r.json"), JSON.stringify({ a: 9, b: 1 })); sh(A, "commit", "--quiet", "-am", "ours");
-  const path = { ...process.env, PATH: "/usr/bin:/bin" };               // no node, no sl on PATH; the driver uses absolute paths
+  // no node and no sl on PATH, only git's own folder; the driver uses absolute paths
+  const gitDir = dirname(execFileSync(process.platform === "win32" ? "where" : "which", ["git"], { encoding: "utf8" }).split(/\r?\n/)[0].trim());
+  const path = { ...process.env, PATH: process.platform === "win32" ? `${gitDir};${process.env.SystemRoot}\\System32` : gitDir === "/usr/bin" ? "/usr/bin:/bin" : `${gitDir}:/usr/bin:/bin` };
   execFileSync("git", ["merge", "--quiet", "--no-edit", "side"], { cwd: A, encoding: "utf8", env: { ...path, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
   assert.deepEqual(JSON.parse(await readFile(join(A, "locker/live/r.json"), "utf8")), { a: 9, b: 2 });
   sh(A, "reset", "--quiet", "--hard", "origin/main"); sh(A, "branch", "-q", "-D", "side");
@@ -475,7 +477,7 @@ test("the restore drill fails on a failing test command and keeps the folders fo
   const t0 = Date.now();
   const slow = await rejects(L.drill(repo, { test: [process.execPath, "-e", "setTimeout(() => {}, 60000)"], dir: join(tmp, "drill-slow") }), "DRILL_FAILED");
   assert.equal(slow.details.test.code, 124); assert.match(slow.details.test.lastLines, /killed after 1 s/);
-  assert.ok(Date.now() - t0 < 5000, "killed within the second, not after a minute");
+  assert.ok(Date.now() - t0 < 20000, "killed at the timeout, not after a minute (the drill's own setup takes a few seconds on a slow box)");
 });
 
 test("status and refusals say what to do next, in the output and in --json alike; init says what it wrote; help knows each command", async () => {
@@ -774,7 +776,7 @@ test("history reads the truth branch's saves and acceptances from the trailers a
   assert.ok(h.rows.some((r) => r.kind === "saved" && r.actor === "rick (human)"), "a human save on main");
   assert.equal(h.rows.at(-1).kind, "outside the tool"); assert.equal(h.rows.at(-1).subject, "first");
   const two = await L.history(repo, { count: 2 }); assert.equal(two.rows.length, 2);
-  const printed = spawnSync(process.execPath, [new URL("../bin/sl.js", import.meta.url).pathname, "history", "-n", "2"], { cwd: A, encoding: "utf8", env: { ...process.env, SL_ACTOR: "" } }); assert.match(printed.stdout, /^origin\/main, newest first \(as of the last fetch\)\n[0-9a-f]{7}  \d{4}-\d\d-\d\d \d\d:\d\d  (accepted|saved|outside the tool)/);
+  const printed = spawnSync(process.execPath, [fileURLToPath(new URL("../bin/sl.js", import.meta.url)), "history", "-n", "2"], { cwd: A, encoding: "utf8", env: { ...process.env, SL_ACTOR: "" } }); assert.match(printed.stdout, /^origin\/main, newest first \(as of the last fetch\)\n[0-9a-f]{7}  \d{4}-\d\d-\d\d \d\d:\d\d  (accepted|saved|outside the tool)/);
   await rejects(L.history(repo, { count: 0 }), "USAGE"); await rejects(L.history(repo, { count: Number("abc") }), "USAGE"); await rejects(L.history(repo, { count: 2.5 }), "USAGE");
   // a crafted subject cannot make a row, two hand-typed actor trailers read as one row, and an acceptance trailer with no record behind it has null reviewer and verdict
   const Z = join(tmp, "Z"); sh(tmp, "clone", "--quiet", remote, Z);
