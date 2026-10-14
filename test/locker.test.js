@@ -635,3 +635,28 @@ test("an update settled by keeping the slice's side is still saved; a Markdown u
   assert.equal(sh(P, "rev-parse", "--abbrev-ref", "HEAD"), "slice/deep"); assert.equal(sh(P, "rev-parse", "main"), sh(P, "rev-parse", "origin/main"));
   await L.lease(repo, claude, "release");
 });
+
+test("a conflict in a file whose parents hold an underline is still a conflict, and a binary file changed on both sides is named", async () => {
+  const r6 = join(tmp, "marks.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", r6);
+  const M = join(tmp, "M"); sh(tmp, "clone", "--quiet", r6, M); sh(M, "checkout", "--quiet", "-b", "main");
+  await writeFile(join(M, "doc.md"), "Title\n=======\nbody\n"); await writeFile(join(M, "img.bin"), Buffer.from([0, 1, 2, 255, 0, 3]));
+  sh(M, "add", "-A"); sh(M, "commit", "--quiet", "-m", "first"); sh(M, "push", "--quiet", "-u", "origin", "main");
+  await L.init(M, { project: "marks" }); const repo = await L.openRepo(M);
+  const rick = await L.actorFromEnv(repo, env("rick", "r7")), claude = await L.actorFromEnv(repo, env("claude", "c7"));
+  await L.save(repo, rick, { message: "manage" }); await L.backup(repo);
+  await writeFile(join(M, "doc.md"), "Title\n=======\nbody, the slice's way\n"); await writeFile(join(M, "img.bin"), Buffer.from([9, 9, 9, 255, 0, 9]));
+  await L.save(repo, claude, { message: "slice", slice: "slice/m" });
+  const N = join(tmp, "N"); sh(tmp, "clone", "--quiet", r6, N);
+  await writeFile(join(N, "doc.md"), "Title\n=======\nbody, main's way\n"); await writeFile(join(N, "img.bin"), Buffer.from([7, 7, 7, 255, 0, 7]));
+  sh(N, "commit", "--quiet", "-am", "main moves"); sh(N, "push", "--quiet", "origin", "main");
+  const c = await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT");
+  assert.deepEqual(c.details.files.sort(), ["doc.md", "img.bin"]); assert.match(c.message, /same lines in doc\.md/); assert.match(c.message, /img\.bin is a binary file changed on both sides/);
+  assert.match(c.next, /put the copy you want in its place/);
+  let st = await L.status(repo); assert.ok(st.problems.some((p) => p.startsWith("UPDATE WAITING: an update left 2 file")), st.problems.join("|"));
+  await rejects(L.save(repo, claude, { message: "forgot the marks" }), "MARKERS_LEFT").then((x) => assert.deepEqual(x.details.files, ["doc.md"]));
+  await writeFile(join(M, "doc.md"), "Title\n=======\nbody, both ways\n");
+  st = await L.status(repo); assert.ok(st.problems.some((p) => p === "UPDATE WAITING: an update left 1 file(s) to settle: img.bin"), st.problems.join("|"));
+  await writeFile(join(M, "img.bin"), Buffer.from([7, 7, 7, 255, 0, 7]));   // main's copy, chosen by hand
+  const saved = await L.save(repo, claude, { message: "settled" }); assert.equal(saved.saved, true);
+  assert.equal(sh(M, "rev-list", "--count", "--merges", "slice/m"), "1"); assert.equal(sh(M, "show", "HEAD:doc.md"), "Title\n=======\nbody, both ways");
+});

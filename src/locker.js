@@ -419,12 +419,12 @@ export async function save(repo, actor, { message, paths = [], slice } = {}) {
   if (branch === "HEAD") throw new LockerError("DETACHED", "this folder is not on a branch, so there is nowhere to save to", { next: `sl save -m "<what and why>" --slice <name>` });
   if (branch === repo.config.truth && actor.kind !== "human") throw new LockerError("AGENT_ON_TRUTH", `an agent does not save on ${repo.config.truth}; it saves on a slice branch and the slice is accepted after a review`, { next: `sl save -m "<what and why>" --slice <name>` });
   if (branch === repo.config.truth && !f.fresh) throw new LockerError("NOT_FETCHED", `cannot reach the remote, so it is unknown whether ${repo.config.truth} is behind; saving on the truth branch waits`, { next: "check the connection, then sl status" });
-  await git(repo.top, ["add", "-A", "--", ...(paths.length ? paths : ["."])]);
   const finishing = await mergeInProgress(repo);
-  if (finishing) {   // finishing an update: every marked line must be settled, or the markers would be saved as content
-    const u = await unsettled(repo, { staged: true });
+  if (finishing) {   // finishing an update: every marked line must be settled before anything is staged, or the marks would be saved as content;
+    const u = await unsettled(repo);   // a one-sided or binary conflict is settled by what is in the tree (the file kept or deleted, the copy wanted)
     if (u.marked.length) throw new LockerError("MARKERS_LEFT", `${u.marked.join(", ")} still holds git's marks; the update is not finished`, { files: u.marked, next: settleNext(u) });
   }
+  await git(repo.top, ["add", "-A", "--", ...(paths.length ? paths : ["."])]);
   // a settled update is saved even when the tree equals HEAD (the slice's side kept): the save with two parents is what finishes it
   if (!finishing && await isClean(repo.top)) return { saved: false, reason: "nothing to save", branch, head: await revParse(repo.top, "HEAD") };
   const body = `${message}\n\n${trailers({ Actor: `${actor.name} (${actor.kind})`, Session: actor.session })}\n`;
@@ -480,34 +480,39 @@ export async function update(repo, actor, { message } = {}) {
   if ((await git(repo.top, ["merge-base", "--is-ancestor", target, "HEAD"], { allowFail: true })) !== null) return { updated: false, reason: `${branch} already has everything on ${remote}/${truth}`, branch, head: await revParse(repo.top, "HEAD") };
   const body = `${message ?? `bring ${truth} into ${branch}`}\n\n${trailers({ Actor: `${actor.name} (${actor.kind})`, Session: actor.session })}\n`;
   try { await git(repo.top, [...ident(actor), "merge", "--no-ff", "--quiet", "-m", body, `${remote}/${truth}`]); } catch (e) {
+    if (!(await conflictFiles(repo)).length) { await git(repo.top, ["merge", "--abort"], { allowFail: true }); throw new LockerError("GIT", `bringing ${truth} into ${branch} failed: ${(e.stderr ?? String(e)).trim()}`, { next: "sl status" }); }
     const u = await unsettled(repo);
-    if (!u.files.length) { await git(repo.top, ["merge", "--abort"], { allowFail: true }); throw new LockerError("GIT", `bringing ${truth} into ${branch} failed: ${(e.stderr ?? String(e)).trim()}`, { next: "sl status" }); }
-    throw new LockerError("UPDATE_CONFLICT", [u.marked.length ? `${branch} and ${truth} changed the same lines in ${u.marked.join(", ")}; those lines are in the files now with git's marks` : "", u.oneSided.length ? `${u.oneSided.join(", ")} changed on one side and deleted on the other` : ""].filter(Boolean).join("; "), { files: u.files, next: settleNext(u) });
+    throw new LockerError("UPDATE_CONFLICT", [u.marked.length ? `${branch} and ${truth} changed the same lines in ${u.marked.join(", ")}; those lines are in the files now with git's marks` : "", u.oneSided.length ? `${u.oneSided.join(", ")} changed on one side and deleted on the other` : "", u.binary.length ? `${u.binary.join(", ")} is a binary file changed on both sides` : ""].filter(Boolean).join("; "), { files: u.files, next: settleNext(u) });
   }
   return { updated: true, branch, head: await revParse(repo.top, "HEAD"), from: target, actor: actor.name };
 }
 const mergeInProgress = async (repo) => (await stat(join(repo.gitDir, "MERGE_HEAD")).catch(() => null)) !== null;
-/** While an update waits: the files still unmerged, plus files the update touched that still hold git's marks (in the index when staged is set, else in the tree). */
-async function unsettled(repo, { staged = false } = {}) {
+/** While an update waits: the files changed on one side and deleted on the other, the binary files changed on both sides, and the files the update touched that still hold git's marks in the tree. */
+async function unsettled(repo) {
   const MARKS = ["-e", "^<<<<<<< ", "-e", "^=======$", "-e", "^>>>>>>> "];
-  // unmerged entries: a file with all three stages is a plain both-changed conflict, settled when its copy holds no mark any more; a file
-  // missing a stage was changed on one side and deleted on the other, and stays listed until the person keeps or deletes it and saves
+  const lines = async (args) => new Set(((await git(repo.top, ["grep", "-h", ...MARKS, ...args], { allowFail: true })) ?? "").split("\n").filter(Boolean));
+  // unmerged entries: a file with all three stages was changed on both sides; a file missing a stage was changed on one side and deleted
+  // on the other, and stays listed until the person keeps or deletes it and saves
   const stages = new Map();
   for (const l of ((await git(repo.top, ["ls-files", "-u"], { allowFail: true })) ?? "").split("\n").filter(Boolean)) { const [meta, file] = l.split("\t"); stages.set(file, (stages.get(file) ?? new Set()).add(meta.split(" ")[2])); }
   const touched = ((await git(repo.top, ["diff", "--name-only", "HEAD", "MERGE_HEAD"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
-  const marked = touched.length ? ((await git(repo.top, ["grep", "-l", ...(staged ? ["--cached"] : []), ...MARKS, "--", ...touched], { allowFail: true })) ?? "").split("\n").filter(Boolean) : [];
-  const out = [], oneSided = [];
-  for (const file of marked) {   // a line that looks like a mark but is in a parent's copy is content (a Markdown underline, say), not a mark
-    const inParent = (await git(repo.top, ["grep", "-q", ...MARKS, "HEAD", "MERGE_HEAD", "--", file], { allowFail: true })) !== null;
-    if (!inParent) out.push(file);
+  const candidates = touched.length ? ((await git(repo.top, ["grep", "-l", ...MARKS, "--", ...touched], { allowFail: true })) ?? "").split("\n").filter(Boolean) : [];
+  const marked = [], oneSided = [], binary = [];
+  for (const file of candidates) {   // a line that looks like a mark but is in a parent's copy is content (a Markdown underline, say); the check is per line
+    const own = await lines(["--", file]), parents = await lines(["HEAD", "MERGE_HEAD", "--", file]);
+    if ([...own].some((l) => !parents.has(l))) marked.push(file);
   }
-  for (const [file, st] of stages) { if (st.size < 3) oneSided.push(file); else if (!out.includes(file) && staged) out.push(file); }
-  return { files: [...new Set([...out, ...oneSided])], marked: out, oneSided };
+  for (const [file, st] of stages) {
+    if (st.size < 3) oneSided.push(file);
+    else if (!marked.includes(file) && ((await git(repo.top, ["diff", "--numstat", "HEAD", "MERGE_HEAD", "--", file], { allowFail: true })) ?? "").startsWith("-\t-")) binary.push(file);
+  }
+  return { files: [...new Set([...marked, ...oneSided, ...binary])], marked, oneSided, binary };
 }
 const conflictFiles = async (repo) => ((await git(repo.top, ["diff", "--name-only", "--diff-filter=U"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
 const settleNext = (u) => [
   u.marked.length ? `open ${u.marked.join(", ")}, keep the lines you want between the <<<<<<< and >>>>>>> marks and delete the marks (in a record file the two sides are keys named "<<<<<<< ours" and ">>>>>>> theirs")` : "",
   u.oneSided.length ? `${u.oneSided.join(", ")}: changed on one side and deleted on the other; keep the file or delete it` : "",
+  u.binary.length ? `${u.binary.join(", ")}: a binary file changed on both sides; put the copy you want in its place` : "",
   u.files.length ? `then sl save -m "<what and why>"` : `the marked lines are settled; sl save -m "<what and why>" finishes the update`,
 ].filter(Boolean).join("; ");
 
