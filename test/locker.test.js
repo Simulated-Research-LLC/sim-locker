@@ -736,14 +736,15 @@ test("the attacks of 2026-10-14: an edited record, a reused slice name from anot
   const saved = await L.save(repo, claude, { message: "settled" }); assert.equal(saved.saved, true); assert.equal(sh(X, "rev-list", "--count", "--merges", "slice/recs"), "1");
 });
 
-test("suite gaps: a used slice name refused at accept from another clone; a lease taken away during the gate puts the folder back on the slice; a fetch stamp from the future counts as never fetched", async () => {
+test("suite gaps: a used slice name refused at accept from another clone; a lease taken away during the gate is caught at the renew after it with the folder still on the slice; a fetch stamp from the future counts as never fetched", async () => {
   const r8 = join(tmp, "gaps.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", r8);
   const G1 = join(tmp, "G1"); sh(tmp, "clone", "--quiet", r8, G1); sh(G1, "checkout", "--quiet", "-b", "main");
   await writeFile(join(G1, "a.md"), "a\n"); sh(G1, "add", "-A"); sh(G1, "commit", "--quiet", "-m", "first"); sh(G1, "push", "--quiet", "-u", "origin", "main");
   await L.init(G1, { project: "gaps" }); let repo = await L.openRepo(G1);
   const rick = await L.actorFromEnv(repo, env("rick", "r9")), claude = await L.actorFromEnv(repo, env("claude", "c9")), astra = await L.actorFromEnv(repo, env("astra", "a9"));
-  const cfg = JSON.parse(await readFile(join(G1, "locker.json"), "utf8")); cfg.lease = { ttlMinutes: 0.05 }; cfg.accept = { gate: [process.execPath, "-e", "setTimeout(() => {}, 2500)"], gateTimeoutSeconds: 3 };
-  assert.throws(() => L.checkConfig({ ...cfg, accept: { ...cfg.accept, gateTimeoutSeconds: 4 } }), /longer than the lease/, "a gate that can outlive the lease is refused at load");
+  const cfg = JSON.parse(await readFile(join(G1, "locker.json"), "utf8")); cfg.lease = { ttlMinutes: 1 }; cfg.accept = { gate: [process.execPath, "-e", "setTimeout(() => {}, 2500)"], gateTimeoutSeconds: 30 };
+  assert.throws(() => L.checkConfig({ ...cfg, accept: { ...cfg.accept, gateTimeoutSeconds: 61 } }), /longer than the lease/, "a gate that can outlive the lease is refused at load");
+  L.checkConfig({ ...cfg, accept: undefined, lease: { ttlMinutes: 1 } });   // no gate: the default timeout is not held against a short lease
   await writeFile(join(G1, "locker.json"), JSON.stringify(cfg, null, 2) + "\n");
   await L.save(repo, rick, { message: "manage, with a slow gate and a 3 s lease" }); await L.backup(repo); repo = await L.openRepo(G1);
   // a name taken on the remote by another clone is refused at accept even when this clone made the branch by hand
@@ -770,8 +771,9 @@ test("suite gaps: a used slice name refused at accept from another clone; a leas
       done("taken");
     } catch (e) { done(e); }
   }, 1500));
-  const lost = await rejects(L.accept(repo, claude, { slice: "slice/g", reviewId: rv2.id, confirm: first.token }), "NO_LEASE");
-  assert.match(lost.message, /lost while accepting/); assert.equal(await taker, "taken", "the lease was taken during the gate");
+  const lost = await rejects(L.accept(repo, claude, { slice: "slice/g", reviewId: rv2.id, confirm: first.token }), "LEASE_HELD");
+  assert.equal(await taker, "taken", "the lease was taken during the gate");
+  assert.match(lost.message, /held by astra \(session elsewhere\)/); const now = (await L.lease(repo, claude, "status")).lease; assert.equal(now.owner, "astra"); assert.equal(now.session, "elsewhere");
   assert.equal(sh(G1, "rev-parse", "--abbrev-ref", "HEAD"), "slice/g"); assert.equal(sh(G1, "rev-parse", "main"), sh(G1, "rev-parse", "origin/main"));
   assert.equal(sh(G1, "--git-dir", r8, "rev-parse", "main"), sh(G1, "rev-parse", "origin/main"), "the remote's main did not move");
   // a fetch stamp from the future is not fresh
