@@ -683,3 +683,51 @@ test("a conflict in a file whose parents hold an underline is still a conflict, 
   const saved = await L.save(repo, claude, { message: "settled" }); assert.equal(saved.saved, true);
   assert.equal(sh(M, "rev-list", "--count", "--merges", "slice/m"), "1"); assert.equal(sh(M, "show", "HEAD:doc.md"), "Title\n=======\nbody, both ways");
 });
+
+test("the attacks of 2026-10-14: an edited record, a reused slice name from another clone, a record conflict through update, a hidden record, a path outside the folder", async () => {
+  const r7 = join(tmp, "attack.git"); sh(tmp, "init", "--bare", "--quiet", "-b", "main", r7);
+  const X = join(tmp, "X"); sh(tmp, "clone", "--quiet", r7, X); sh(X, "checkout", "--quiet", "-b", "main");
+  await mkdir(join(X, "recs")); await writeFile(join(X, "a.md"), "a\n"); await writeFile(join(X, "recs/x.record.json"), '{"a": 1, "b": 1}\n');
+  sh(X, "add", "-A"); sh(X, "commit", "--quiet", "-m", "first"); sh(X, "push", "--quiet", "-u", "origin", "main");
+  await L.init(X, { project: "attack" }); const repo = await L.openRepo(X);
+  const rick = await L.actorFromEnv(repo, env("rick", "r8")), claude = await L.actorFromEnv(repo, env("claude", "c8")), astra = await L.actorFromEnv(repo, env("astra", "a8"));
+  await L.save(repo, rick, { message: "manage" }); await L.backup(repo);
+  // 1. a review record edited after it was saved is a change accept sees, however it is saved
+  await writeFile(join(X, "a.md"), "a2\n"); await L.save(repo, claude, { message: "late", slice: "slice/late" }); await L.backup(repo);
+  const fix = await L.review(repo, astra, { from: "main", to: "slice/late", verdict: "fix", findings: "needs work" });
+  await L.save(repo, claude, { message: "the record as written" }); await L.backup(repo);
+  const path = join(X, "locker/reviews", `${fix.id}.json`); await writeFile(path, (await readFile(path, "utf8")).replace('"fix"', '"pass"'));
+  await L.save(repo, claude, { message: "tidy the record" }); await L.backup(repo);
+  let st = await L.status(repo); assert.match(st.next.at(-1).step, /^backed up, not reviewed/, "status does not call an edited record a review");
+  await L.lease(repo, claude, "acquire");
+  const e = await rejects(L.accept(repo, claude, { slice: "slice/late", reviewId: fix.id }), "REVIEW_STALE"); assert.match(e.message, /M locker\/reviews\//);
+  await L.lease(repo, claude, "release");
+  // 5. a record that exists only on disk (hidden from git) is not a review in status
+  sh(X, "checkout", "--quiet", "main"); await writeFile(join(X, "b.md"), "b\n"); await L.save(repo, claude, { message: "b", slice: "slice/hidden" }); await L.backup(repo);
+  const ghost = await L.review(repo, astra, { from: "main", to: "slice/hidden", verdict: "pass", findings: "ghost" });
+  await writeFile(join(X, ".git", "info", "exclude"), `locker/reviews/${ghost.id}.json\n`);
+  st = await L.status(repo); assert.match(st.next.at(-1).step, /^backed up, not reviewed/, "a record only on disk: " + st.next.at(-1).step);
+  await rm(join(X, "locker/reviews", `${ghost.id}.json`)); await writeFile(join(X, ".git", "info", "exclude"), "");
+  // 8. a path outside the folder is refused before any branch is made; a review of nothing is refused
+  await writeFile(join(tmp, "outside.txt"), "o\n");
+  await rejects(L.save(repo, claude, { message: "hack", slice: "slice/never", paths: [join(tmp, "outside.txt")] }), "BAD_PATH");
+  assert.equal(sh(X, "branch", "--list", "slice/never"), ""); assert.equal(sh(X, "rev-parse", "--abbrev-ref", "HEAD"), "slice/hidden");
+  await rejects(L.review(repo, astra, { from: "slice/hidden", to: "main", verdict: "pass", findings: "nothing" }), "BAD_RANGE");
+  // 3. a slice name used by another clone is refused here, at save and at accept
+  const Y = join(tmp, "Y"); sh(tmp, "clone", "--quiet", r7, Y); sh(Y, "checkout", "--quiet", "-b", "done/slice/used"); sh(Y, "push", "--quiet", "origin", "done/slice/used");
+  await rejects(L.save(repo, claude, { message: "reuse", slice: "slice/used" }), "NAME_TAKEN");
+  assert.equal(sh(X, "branch", "--list", "slice/used"), "");
+  // 2. a record file both sides changed: the driver's keyed marks count as marks, and a side the driver could not read is named
+  sh(X, "checkout", "--quiet", "main"); await writeFile(join(X, "recs/x.record.json"), '{"a": 1, "b": 2}\n'); await writeFile(join(X, "recs/y.record.json"), '{"k": 2}\n');
+  await L.save(repo, claude, { message: "records", slice: "slice/recs" });
+  await writeFile(join(Y, "recs/x.record.json"), '{"a": 1, "b": 3}\n'); await writeFile(join(Y, "recs/y.record.json"), '{"k": 1,\n');
+  sh(Y, "checkout", "--quiet", "main"); await writeFile(join(Y, "recs/x.record.json"), '{"a": 1, "b": 3}\n'); await writeFile(join(Y, "recs/y.record.json"), '{"k": 1,\n');
+  sh(Y, "add", "-A"); sh(Y, "commit", "--quiet", "-m", "main's records"); sh(Y, "push", "--quiet", "origin", "main");
+  const c = await rejects(L.update(repo, claude, {}), "UPDATE_CONFLICT");
+  assert.deepEqual(c.details.files.sort(), ["recs/x.record.json", "recs/y.record.json"]); assert.match(c.message, /same lines in recs\/x\.record\.json/); assert.match(c.message, /recs\/y\.record\.json changed on both sides and could not be merged/);
+  assert.match(await readFile(join(X, "recs/x.record.json"), "utf8"), /"<<<<<<< ours"/);
+  await rejects(L.save(repo, claude, { message: "oops" }), "MARKERS_LEFT").then((x) => assert.deepEqual(x.details.files, ["recs/x.record.json"]));
+  st = await L.status(repo); assert.ok(st.problems.some((p) => p.startsWith("UPDATE WAITING: an update left 2 file")), st.problems.join("|"));
+  await writeFile(join(X, "recs/x.record.json"), '{"a": 1, "b": 5}\n'); await writeFile(join(X, "recs/y.record.json"), '{"k": 2}\n');
+  const saved = await L.save(repo, claude, { message: "settled" }); assert.equal(saved.saved, true); assert.equal(sh(X, "rev-list", "--count", "--merges", "slice/recs"), "1");
+});
