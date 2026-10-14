@@ -447,7 +447,7 @@ test("the restore drill: a plain clone from a second remote carries the commit, 
   sh(tmp, "clone", "--quiet", remote, join(tmp, "D")); const D = join(tmp, "D");
   const cfg = JSON.parse(await readFile(join(D, "locker.json"), "utf8")); cfg.drill = { test: [process.execPath, "-e", "process.exit(9)"], timeoutSeconds: 1 };
   await writeFile(join(D, "locker.json"), JSON.stringify(cfg, null, 2) + "\n"); sh(D, "commit", "--quiet", "-am", "drill.test"); sh(D, "push", "--quiet", "origin", "main");
-  const nine = await rejects(L.drill(repo), "DRILL_FAILED"); assert.equal(nine.details.test.code, 9); assert.equal(nine.details.commit, sh(D, "rev-parse", "HEAD"));
+  const nine = await rejects(L.drill(repo, { dir: join(tmp, "drill-nine") }), "DRILL_FAILED");   // its own folder under tmp, so a failed drill leaves nothing in the system temp folder assert.equal(nine.details.test.code, 9); assert.equal(nine.details.commit, sh(D, "rev-parse", "HEAD"));
   sh(D, "reset", "--quiet", "--hard", "HEAD~1"); sh(D, "push", "--quiet", "--force", "origin", "main");   // raw git in the test only, to put the remote back
   // a shallow clone cannot stand in for the remote; a file as --dir is refused with the right code
   const S = join(tmp, "shallow"); sh(tmp, "clone", "--quiet", "--depth", "1", "file://" + remote, S);

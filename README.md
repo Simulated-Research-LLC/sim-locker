@@ -15,10 +15,10 @@ You never need the words commit, push, pull, merge, rebase or land. `sl status` 
 
 ```
 git clone https://github.com/simulated-research/sim-locker
-cd sim-locker && npm install && npm link      # gives you `sl` and `sl-mcp` on PATH
+cd sim-locker && npm install && npm link      # gives you `sl`, `simlocker` and `sl-mcp` on PATH
 ```
 
-Node 22 or newer. No build step.
+Node 22 or newer. No build step. On Windows, PowerShell already has `sl` as a short name for `Set-Location`, so there the command is `simlocker` (the same program under a second name); `sl` works in cmd.exe and in Git Bash. Old Winds' tooling runs `node <sim-locker>\bin\sl.js` for the same reason.
 
 ## Use it on a project
 
