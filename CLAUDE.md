@@ -11,7 +11,7 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 5. No force-push anywhere except the compare-and-swap on `refs/heads/locker/lease`. `grep -n force src/` should show, besides prose that says the tool never forces, only that line and options named force that are not pushes: `freshen`'s (fetch now), `worktree remove --force` on the gate's own checkout, and the `rm` of the drill's own folders.
 6. A refusal is a thrown `LockerError` with a stable code. Codes are listed in `README.md`; a new code is added there in the same change.
 7. The push exit code is not evidence. After every push, fetch and compare refs.
-8. Tests run against real git (`npm test`). A behaviour with no test is a claim, not a feature. Fakes of git are not accepted.
+8. Tests run against real git (`npm test`), and CI runs them on ubuntu and windows on every push (`.github/workflows/test.yml`); a change is not accepted with a red Windows job. A behaviour with no test is a claim, not a feature. Fakes of git are not accepted.
 9. Writing: plain words, no em dashes, no filler. Git vocabulary (commit, push, merge) stays inside the code; the user-facing words are saved, backed up, accepted, live.
 
 ## Where things are
@@ -24,6 +24,7 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 | `src/mcp.js` | `buildServer(cwd)`: ten tools over the core |
 | `docs/review-0.1.md` | the adversarial review of the first build and the fix status of every finding; the attack list to rerun after any change to `accept`, `save` or the lease |
 | `bin/sl.js` | argument parsing and plain-text printing only; no logic |
+| `.github/workflows/test.yml` | the suite on both operating systems on every push |
 | `bin/sl-guard.js`, `.github/workflows/guard-main.yml` | the tripwire on pushes to main: fails and opens an issue on a forced push or a commit that bypassed the tool |
 | `test/*.test.js` | temp bare remote plus two clones; `mcp.test.js` drives the MCP server over an in-memory transport |
 | `docs/backlog.md` | findings not fixed in the slice that found them, with the reason; a review's polish rows go here |
