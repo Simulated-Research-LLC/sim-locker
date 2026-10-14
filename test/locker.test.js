@@ -245,9 +245,10 @@ test("the merge driver that init installs works without sl on PATH, and status -
   // no node and no sl on PATH, only git's own folder; the driver uses absolute paths
   const gitDir = dirname(execFileSync(process.platform === "win32" ? "where" : "which", ["git"], { encoding: "utf8" }).split(/\r?\n/)[0].trim());
   const path = { ...process.env, PATH: process.platform === "win32" ? `${gitDir};${process.env.SystemRoot}\\System32` : gitDir === "/usr/bin" ? "/usr/bin:/bin" : `${gitDir}:/usr/bin:/bin` };
-  execFileSync("git", ["merge", "--quiet", "--no-edit", "side"], { cwd: A, encoding: "utf8", env: { ...path, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
-  assert.deepEqual(JSON.parse(await readFile(join(A, "locker/live/r.json"), "utf8")), { a: 9, b: 2 });
-  sh(A, "reset", "--quiet", "--hard", "origin/main"); sh(A, "branch", "-q", "-D", "side");
+  try {
+    execFileSync("git", ["merge", "--quiet", "--no-edit", "side"], { cwd: A, encoding: "utf8", env: { ...path, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+    assert.deepEqual(JSON.parse(await readFile(join(A, "locker/live/r.json"), "utf8")), { a: 9, b: 2 });
+  } finally { try { sh(A, "merge", "--abort"); } catch { /* the merge finished */ } sh(A, "reset", "--quiet", "--hard", "origin/main"); sh(A, "branch", "-q", "-D", "side"); }   // main as it was, whatever happened, so the guard test after this one sees one raw commit
   const st = await L.status(repo, { fetch: false });
   assert.ok(st.problems.some((p) => p.startsWith("NOT FETCHED")), st.problems.join("|"));
 });

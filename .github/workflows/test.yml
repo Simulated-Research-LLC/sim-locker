@@ -16,7 +16,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: git config --global user.name tests && git config --global user.email tests@simlocker.local
       - run: npm ci
       - run: npm test
       - run: npm run lines
