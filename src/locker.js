@@ -287,6 +287,13 @@ async function staleReviews(repo) {
     let superseded = false;
     for (const h of done.heads) if (r.range?.to && (await git(repo.top, ["merge-base", "--is-ancestor", r.range.to, h], { allowFail: true })) !== null) { superseded = true; break; }
     if (superseded) continue;
+    // a newer review that covers this head, or an earlier version of it past this review's head, replaces this one
+    for (const n of await listRecords(repo, "reviews")) {
+      if (n.id === r.id || !n.range?.to || !r.range?.to) continue;
+      const later = (await git(repo.top, ["merge-base", "--is-ancestor", r.range.to, n.range.to], { allowFail: true })) !== null && n.range.to !== r.range.to;
+      if (later && (await git(repo.top, ["merge-base", "--is-ancestor", n.range.to, "HEAD"], { allowFail: true })) !== null) { superseded = true; break; }
+    }
+    if (superseded) continue;
     const moved = [];
     for (const [f, blob] of Object.entries(r.cited)) { const now = await blobAt(repo.top, "HEAD", f); if (now !== blob) moved.push(f); }
     if (moved.length) out.push({ id: r.id, moved });
@@ -358,13 +365,15 @@ export async function status(repo, { fetch = true } = {}) {
   const truth = await truthState(repo);
   const branch0 = await currentBranch(repo.top), dirty0 = branch0 === truthName && !(await isClean(repo.top));
   if (truth.stale) problem("STALE", `STALE: ${truthName} is ${truth.behind} save(s) behind ${remoteName}/${truthName}; pull before saving on it or accepting`, dirty0 ? `sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName}), then sl pull` : "sl pull");
-  if (!truth.remote) problem("NO REMOTE TRUTH", `NO REMOTE TRUTH: ${remoteName}/${truthName} does not exist; nothing has ever been backed up`, `on ${truthName}, as ${humans}: sl backup`);
+  if (!truth.remote) problem("NO REMOTE TRUTH", `NO REMOTE TRUTH: ${remoteName}/${truthName} does not exist; nothing has ever been backed up`, repo.configFrom === "working tree" ? `as ${humans}, on ${truthName}: sl save -m "manage with sim locker" ${CONFIG} .gitattributes, then sl backup` : `on ${truthName}, as ${humans}: sl backup`);
   if (repo.configFrom === "working tree") problem("CONFIG FROM WORKING TREE", `CONFIG FROM WORKING TREE: ${CONFIG} is not on ${truthName} yet; save and back it up`, `as ${humans}, on ${truthName}: sl save -m "manage with sim locker" ${CONFIG} .gitattributes, then sl backup`);
   const others = await otherClones(repo);
   if (others.length) problem("TWO CLONES", `TWO CLONES: this project is also cloned at ${others.join(", ")}; one machine, one clone`, `keep one folder (this one is ${repo.top}) and move the other aside; a folder that is gone is forgotten on the next sl status`);
   const { lease: cur, corrupt } = await readLease(repo);
   if (corrupt) problem("LEASE CORRUPT", "LEASE CORRUPT: refs/heads/locker/lease does not hold valid JSON", "sl lease acquire writes a fresh one");
-  if (cur?.owner && !cur.expired) problem("LEASE HELD", `LEASE HELD BY ${cur.owner} (${cur.kind}, session ${cur.session}) until ${cur.expires}`, `it expires in ${minutesLeft(cur)} min; wait, or ${cur.owner} runs sl lease release`);
+  const mySession = process.env.SL_SESSION ?? (await readFile(join(repo.gitDir, "locker-session"), "utf8").catch(() => "")).trim();
+  const myLease = !!cur?.owner && !cur.expired && cur.session === mySession;
+  if (cur?.owner && !cur.expired && !myLease) problem("LEASE HELD", `LEASE HELD BY ${cur.owner} (${cur.kind}, session ${cur.session}) until ${cur.expires}`, `it expires in ${minutesLeft(cur)} min; wait, or ${cur.owner} runs sl lease release`);
   const branch = await currentBranch(repo.top);
   const reviewCmd = `sl review ${truthName}..${branch === "HEAD" ? "<slice>" : branch} --verdict pass|fix|block -f "<findings>"`;
   for (const s of await staleReviews(repo)) problem("STALE REVIEW", `STALE REVIEW ${s.id}: ${s.moved.length} cited file(s) changed since: ${s.moved.slice(0, 5).join(", ")}${s.moved.length > 5 ? ", ..." : ""}`, `locker/reviews/${s.id}.json no longer matches the files; a different actor reviews again: ${reviewCmd}`);
@@ -374,10 +383,16 @@ export async function status(repo, { fetch = true } = {}) {
   const slice = await sliceState(repo, branch);
   const ab = await aheadBehind(repo.top, branch, `${remoteName}/${branch}`);
   const reviews = (await listRecords(repo, "reviews")).map((r) => ({ id: r.id, verdict: r.verdict, reviewer: r.reviewer, to: r.range?.to }));
-  // a review stays current when the only save after the head it covers added the record itself
-  const lastFiles = ((await git(repo.top, ["show", "--name-only", "--format=", "HEAD"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
-  const reviewedHead = lastFiles.length && lastFiles.every((f) => f.startsWith("locker/reviews/")) ? await revParse(repo.top, "HEAD~1") : slice.head;
-  const onTruth = branch === truthName, passed = reviews.find((r) => (r.to === slice.head || r.to === reviewedHead) && r.verdict === "pass");
+  // a review stays current over the saves accept allows after the reviewed head: added review records and the project's trailing files,
+  // read the way accept reads them (no rename detection, an added record is A), and never across a save with two parents
+  const trailing = repo.config.accept.trailing.map(globToRegExp), covered = new Set([slice.head]), stale = new Set((await staleReviews(repo)).map((s) => s.id));
+  for (let h = slice.head, n = 0; h && n < 20; n++) {
+    if (((await git(repo.top, ["rev-list", "--parents", "-n", "1", h], { allowFail: true })) ?? "").split(" ").length !== 2) break;
+    const changes = ((await git(repo.top, ["show", "--name-status", "--no-renames", "--format=", h], { allowFail: true })) ?? "").split("\n").filter(Boolean).map((l) => { const [st, f] = l.split("\t"); return { st, f }; });
+    if (!changes.length || !changes.every(({ st, f }) => (st === "A" && /^locker\/reviews\/rev_[0-9a-f]{12}\.json$/.test(f)) || (!NEVER_TRAILING.test(f) && trailing.some((re) => re.test(f))))) break;
+    h = await revParse(repo.top, `${h}~1`); if (h) covered.add(h);
+  }
+  const onTruth = branch === truthName, passed = reviews.find((r) => covered.has(r.to) && r.verdict === "pass" && !stale.has(r.id));
   let step;
   if (branch === "HEAD") step = `not on a branch: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName})`;
   else if (onTruth && truth.stale) step = dirty.length ? `${truthName} is behind and ${dirty.length} file(s) not saved: sl save -m "<what and why>" --slice <name> (a new slice starts from ${remoteName}/${truthName}), then sl pull` : `${truthName} is behind: sl pull first`;
@@ -385,10 +400,10 @@ export async function status(repo, { fetch = true } = {}) {
   else if (!slice.backedUp) step = `saved, not backed up: sl backup`;
   else if (onTruth) step = slice.live.applies && slice.live.commit !== slice.head ? `${truthName} is backed up; when this version is what people use: sl live ${slice.head.slice(0, 7)}` : `nothing waiting; ${truthName} is backed up`;
   else if (slice.accepted) step = `accepted as ${slice.accepted.slice(0, 7)} on ${truthName}; nothing waiting on this slice`;
-  else if (passed) step = `reviewed (${passed.id}, pass); to accept: sl lease acquire, then sl accept ${branch} --review ${passed.id}`;
+  else if (passed) step = `reviewed (${passed.id}, pass); to accept: ${myLease ? "" : "sl lease acquire, then "}sl accept ${branch} --review ${passed.id}`;
   else step = `backed up, not reviewed: a different actor runs ${reviewCmd}, then sl save the record and sl accept ${branch} --review <id>`;
   next.push({ step });
-  return { project: repo.config.project, path: repo.top, remote: repo.remoteUrl, configFrom: repo.configFrom, freshness, problems, next, truth: { branch: truthName, ...truth }, current: { ...slice, onTruth, ahead: ab.ahead, behind: ab.behind, uncommitted: dirty }, lease: cur ?? null, reviews };
+  return { project: repo.config.project, path: repo.top, remote: repo.remoteUrl, configFrom: repo.configFrom, freshness, problems, next, truth: { branch: truthName, ...truth }, current: { ...slice, onTruth, ahead: ab.ahead, behind: ab.behind, uncommitted: dirty }, lease: cur ? { ...cur, mine: myLease } : null, reviews };
 }
 
 /** saved: commit the work on the current slice branch, stamped with the actor. Refuses a stale folder, and refuses agents on the truth branch. */
@@ -598,11 +613,11 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
     // last look before the only write that matters: the lease must still be ours and the remote must not have moved
     await freshen(repo, { force: true });
     const stillMine = await holdsLease(repo, actor), remoteTruth = await revParse(repo.top, `${remote}/${truth}`);
-    if (!stillMine || remoteTruth !== t.remote) { await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]); throw new LockerError(stillMine ? "STALE" : "NO_LEASE", stillMine ? "the remote truth branch moved while accepting; the local merge was undone" : "the lease was lost while accepting; the local merge was undone", { next: stillMine ? "sl pull, then sl accept again" : "sl lease acquire, then sl accept again" }); }
+    if (!stillMine || remoteTruth !== t.remote) { await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]); throw new LockerError(stillMine ? "STALE" : "NO_LEASE", stillMine ? `${truth} moved on the remote while accepting; nothing is left half-done here` : "the lease was lost while accepting; nothing is left half-done here", { next: stillMine ? "sl pull, then sl accept again" : "sl lease acquire, then sl accept again" }); }
     const pushed = await git(repo.top, ["push", "--quiet", remote, `${truth}:refs/heads/${truth}`], { allowFail: true });
-    if (pushed === null) { await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]); throw new LockerError("PUSH_REFUSED", "the remote refused the push (it moved, or it cannot be reached); the local merge was undone", { next: "sl pull, then sl accept again" }); }
+    if (pushed === null) { await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]); throw new LockerError("PUSH_REFUSED", `the remote did not take the acceptance (${truth} moved there, or it cannot be reached); nothing is left half-done here`, { next: "sl pull, then sl accept again" }); }
     const onRemote = await remoteRef(repo, `refs/heads/${truth}`);
-    if (onRemote !== merge) throw new LockerError("NOT_BACKED_UP", `after the push the remote ${truth} is ${onRemote}, not ${merge}; look before doing anything else`);
+    if (onRemote !== merge) throw new LockerError("NOT_BACKED_UP", `the acceptance was sent, but the remote's ${truth} is ${onRemote}, not ${merge}; look before doing anything else`);
     await freshen(repo, { force: true });
     await git(repo.top, ["branch", "-m", slice, `done/${slice}`]);
     const kept = await git(repo.top, ["push", "--quiet", remote, `done/${slice}:refs/heads/done/${slice}`], { allowFail: true });

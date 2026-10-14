@@ -1,6 +1,6 @@
 {
   "name": "sim-locker",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "The truth store for a person and their AI agents: git underneath, four states on top (saved, backed up, accepted, live), a CLI and an MCP server.",
   "license": "MIT",
   "private": true,

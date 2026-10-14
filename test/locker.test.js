@@ -34,6 +34,8 @@ test("a plain folder and an unmanaged clone are refused", async () => {
 test("init makes the clone managed and a human can save and back up on the truth branch", async () => {
   const r = await L.init(A, { project: "demo" });
   assert.equal(r.config.truth, "main");
+  const fresh = await L.status(await L.openRepo(A), { fetch: false });   // right after init: the two problems that always come together share one fix
+  assert.match(fresh.next.find((n) => n.code === "CONFIG FROM WORKING TREE").fix, /sl save -m "manage with sim locker" locker\.json \.gitattributes, then sl backup/);
   const repo = await L.openRepo(A);
   const rick = await L.actorFromEnv(repo, env("rick", "s1"));
   assert.equal(rick.kind, "human");
@@ -103,7 +105,9 @@ test("the lease: one holder, no release by others, taken when expired", async ()
   await rejects(L.lease(repo, astra, "release"), "LEASE_HELD");
   await rejects(L.lease(repo, astra, "renew"), "LEASE_HELD");
   assert.equal((await L.lease(repo, claude, "renew")).action, "renewed");
-  const st = await L.status(repo); assert.ok(st.problems.some((p) => p.startsWith("LEASE HELD BY claude")));
+  let st = await L.status(repo); assert.ok(st.problems.some((p) => p.startsWith("LEASE HELD BY claude")));
+  process.env.SL_SESSION = "c1";   // the holder's own session: the lease is not a problem for it
+  try { st = await L.status(repo); assert.ok(!st.problems.some((p) => p.startsWith("LEASE HELD")), st.problems.join("|")); assert.equal(st.lease.mine, true); } finally { delete process.env.SL_SESSION; }
   const short = { ...repo, config: { ...repo.config, lease: { ttlMinutes: 0 } } };
   await L.lease(short, claude, "acquire");
   assert.equal((await L.lease(repo, astra, "acquire")).action, "acquired");
@@ -127,6 +131,11 @@ test("accept needs the lease, a review of the exact range, and a confirm token; 
   await L.save(repo, claude, { message: "v3" });                    // commits game.js and the review record
   let st = await L.status(repo); assert.ok(st.problems.some((p) => p.startsWith("STALE REVIEW " + old.id)), st.problems.join("|"));
   await rejects(L.accept(repo, claude, { slice: "slice/bump", reviewId: old.id }), "REVIEW_STALE");
+  // a newer review of the slice's current head replaces the stale one in status (it clears for good at accept)
+  const newer = await L.review(repo, astra, { from: "main", to: "slice/bump", verdict: "pass", findings: "v3 is fine" });
+  await L.save(repo, claude, { message: "review again" }); await L.backup(repo);
+  st = await L.status(repo); assert.ok(!st.problems.some((p) => p.startsWith("STALE REVIEW")), "replaced: " + st.problems.join("|"));
+  assert.match(st.next.at(-1).step, new RegExp(`reviewed \\(${newer.id}`));
   // a blocking review blocks
   const block = await L.review(repo, astra, { from: "main", to: "slice/bump", verdict: "block", findings: "v3 breaks the build" });
   await L.save(repo, claude, { message: "review: block" });
@@ -301,7 +310,21 @@ test("accept.trailing lets a configured record file change after the review; acc
   const rv = await L.review(repo2, astra, { from: "main", to: "slice/gated", verdict: "pass", findings: "fine" });
   await writeFile(join(A, "ledger/rows.md"), "| v | outcome |\n| 1 | feature |\n");
   await L.save(repo2, claude, { message: "review and ledger row" });
+  await writeFile(join(A, "ledger/rows.md"), "| v | outcome |\n| 1 | feature |\n| 1 | again |\n"); await L.save(repo2, claude, { message: "another row" });
   await L.backup(repo2); await L.lease(repo2, claude, "acquire");
+  assert.match((await L.status(repo2)).next.at(-1).step, /^reviewed \(/, "a trailing-file save after the review keeps the slice reviewed in status, as accept allows it");
+  // what accept refuses, status does not call reviewed: a file renamed into locker/reviews/ after the review, and a save with two parents.
+  // each case on its own slice off slice/gated, reviewed and backed up first so the step reads "reviewed", then broken
+  for (const [name, breakIt] of [["slice/walk-rename", async () => { sh(A, "mv", "feature.txt", "locker/reviews/rev_000000000001.json"); await L.save(repo2, claude, { message: "sneak" }); }],
+                                 ["slice/walk-merge", async () => { const W = join(tmp, "W"); sh(tmp, "clone", "--quiet", remote, W); await writeFile(join(W, "ledger/other.md"), "| 9 | from main |\n"); sh(W, "add", "-A"); sh(W, "commit", "--quiet", "-m", "main row"); sh(W, "push", "--quiet", "origin", "main"); await rm(W, { recursive: true }); assert.equal((await L.update(repo2, claude, {})).updated, true); }]]) {
+    sh(A, "checkout", "--quiet", "-b", name); await L.backup(repo2);
+    await L.review(repo2, astra, { from: "main", to: name, verdict: "pass", findings: "fine" }); await L.save(repo2, claude, { message: "record" }); await L.backup(repo2);
+    assert.match((await L.status(repo2)).next.at(-1).step, /^reviewed \(rev_/);   // both slices' reviews cover the same head, so either id may be named
+    await breakIt(); await L.backup(repo2);
+    assert.match((await L.status(repo2)).next.at(-1).step, /^backed up, not reviewed/, `${name}: what accept refuses, status does not call reviewed`);
+    sh(A, "checkout", "--quiet", "slice/gated");
+  }
+  await L.pull(repo2);   // the local main caught up with the remote (the merge case moved it)
   let first = await L.accept(repo2, claude, { slice: "slice/gated", reviewId: rv.id });
   assert.equal(first.confirmRequired, true); assert.match(first.gate, /gate\.js will run/);
   // the gate runs at the confirm step, on the committed tree: gate-block is in it, so it refuses with its own words

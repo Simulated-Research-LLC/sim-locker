@@ -1,0 +1,25 @@
+{
+ "id": "rev_de1fa5832791",
+ "kind": "review",
+ "range": {
+  "from": "de6c2c7a9db164245a980242b54d75ec0f8fe84b",
+  "to": "362580ecc1d1c879351ad5f76f2d5196e7547dba"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Fresh-context review of 0.2.6 over three rounds. The five backlog rows are closed as the rows say: a stale review is replaced in status only by a newer review whose head is a descendant of the stale one and an ancestor of HEAD, so another slice's review, a review of main itself and a newer review that is itself stale do not hide it (scratch runs on a bare remote plus clones, case supersede). The lease held by this session is no problem, prints (yours) and lease.mine, and the exit code follows problems.length. The NO REMOTE TRUTH fix carries the save and the backup while the config is from the working tree. Round one found the walk-back reading saves with rename detection and any change status, crossing merge saves, and naming a review already listed as stale, so status said reviewed where accept refused REVIEW_STALE or REVIEW_RANGE; round two found the two new tests passing against the unfixed code because the slice was not backed up. Both fixed on the slice: the walk reads name-status with no renames, requires A for a record, stops at a save with two parents, skips flagged reviews, and the tests run on backed-up slices. Checked by swapping in 65dfe3c's src/locker.js: 1 fail (test 12), with the fix 26 pass. Attack cases uncited, modify, merge, trailing-cited and supersede all agree with accept now. npm run lines 1077, no em dash in the diff, 0.2.6 in package.json, package-lock.json and src/mcp.js, README and backlog rows true, docs/errata.md records the two typed line counts; the squash message should carry the measured 1077.",
+ "cited": {
+  "README.md": "e4c0a922f590db8bc856dd15c9330fa4bcb55cb6",
+  "bin/sl.js": "a7645ff1b09ac7d25bd804a799bc33333ccec39d",
+  "docs/backlog.md": "1aaaaecbe0999dc5367b6f95e3e0da3b837d369e",
+  "docs/errata.md": "49db8cdf6d79e4bfb8e805438c6d3960c2672d6d",
+  "package-lock.json": "154c4e597b616ee758cc7858a094c9c1113806c3",
+  "package.json": "4e3803979e0e338f9f3314017ded22c4bafa625e",
+  "src/locker.js": "0ce363606549d31aec43a3d836d0cbb122b3c29d",
+  "src/mcp.js": "e9770fd849361e65d52fa32969c7c4f6beb4d030",
+  "test/locker.test.js": "f0693471149b0bdeebbfb9160b428a8cc57e1d8c"
+ },
+ "created": "2026-10-14T04:21:53.547Z"
+}
