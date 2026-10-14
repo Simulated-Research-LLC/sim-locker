@@ -562,8 +562,13 @@ test("a slice that changed the same lines as the truth branch is refused at acce
   assert.equal(sh(E, "rev-list", "--count", "--merges", "slice/c"), "0", "nothing was saved");
   await writeFile(join(E, "notes.md"), "<<<<<<< HEAD\nstill marked\n");
   sh(E, "add", "notes.md"); await rejects(L.save(repo, claude, { message: "oops" }), "MARKERS_LEFT");
+  st = await L.status(repo); assert.ok(st.problems.some((p) => p === "UPDATE WAITING: an update left 1 file(s) with lines to settle: notes.md"), "status and save agree while a mark is staged: " + st.problems.join("|"));
+  await writeFile(join(E, "notes.md"), "line one, both ways\n"); sh(E, "add", "notes.md");
   st = await L.status(repo); assert.ok(st.problems.some((p) => p === "UPDATE WAITING: an update is settled but not yet saved"), st.problems.join("|"));
-  await writeFile(join(E, "notes.md"), "line one, both ways\n");
+  // during an update a save takes everything on this branch: paths or another slice are refused before anything moves
+  await rejects(L.save(repo, claude, { message: "part", paths: ["notes.md"] }), "UPDATE_CONFLICT");
+  await rejects(L.save(repo, claude, { message: "elsewhere", slice: "slice/other" }), "UPDATE_CONFLICT");
+  assert.equal(sh(E, "rev-parse", "--abbrev-ref", "HEAD"), "slice/c"); assert.equal(sh(E, "branch", "--list", "slice/other"), "");
   const saved = await L.save(repo, claude, { message: "settled" }); assert.equal(saved.saved, true);
   assert.equal(sh(E, "rev-list", "--count", "--merges", "slice/c"), "1", "the settled update is one save with two parents");
   st = await L.status(repo); assert.ok(!st.problems.some((p) => p.startsWith("UPDATE WAITING")));

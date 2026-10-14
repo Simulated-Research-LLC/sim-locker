@@ -368,7 +368,7 @@ export async function status(repo, { fetch = true } = {}) {
   const branch = await currentBranch(repo.top);
   const reviewCmd = `sl review ${truthName}..${branch === "HEAD" ? "<slice>" : branch} --verdict pass|fix|block -f "<findings>"`;
   for (const s of await staleReviews(repo)) problem("STALE REVIEW", `STALE REVIEW ${s.id}: ${s.moved.length} cited file(s) changed since: ${s.moved.slice(0, 5).join(", ")}${s.moved.length > 5 ? ", ..." : ""}`, `locker/reviews/${s.id}.json no longer matches the files; a different actor reviews again: ${reviewCmd}`);
-  if (await mergeInProgress(repo)) { const files = await conflictFiles(repo); problem("UPDATE WAITING", files.length ? `UPDATE WAITING: an update left ${files.length} file(s) with lines to settle: ${files.slice(0, 5).join(", ")}` : "UPDATE WAITING: an update is settled but not yet saved", settleNext(files)); }
+  if (await mergeInProgress(repo)) { const files = await unsettled(repo); problem("UPDATE WAITING", files.length ? `UPDATE WAITING: an update left ${files.length} file(s) with lines to settle: ${files.slice(0, 5).join(", ")}` : "UPDATE WAITING: an update is settled but not yet saved", settleNext(files)); }
   if (branch === "HEAD") problem("DETACHED", "DETACHED: not on any branch; check out a slice or the truth branch", `sl save -m "<what and why>" --slice <name> puts the folder on a slice branch`);
   const dirty = await changedFiles(repo.top);
   const slice = await sliceState(repo, branch);
@@ -403,6 +403,7 @@ export async function save(repo, actor, { message, paths = [], slice } = {}) {
     const dirty = !(await isClean(repo.top));
     throw new LockerError("STALE", `${repo.config.truth} here is ${truth.behind} save(s) behind the remote${dirty ? ", and it has changes not yet saved" : ""}`, { next: dirty ? `sl save -m "<what and why>" --slice <name> (a new slice starts from the remote's ${repo.config.truth}), then sl pull` : "sl pull" });
   }
+  if (await mergeInProgress(repo) && (paths.length || (slice && slice !== before))) throw new LockerError("UPDATE_CONFLICT", "an update is waiting; it is finished with one save of everything, on this branch", { next: `sl save -m "<what and why>" (no paths, no --slice)` });
   let note;
   if (slice && slice !== before) {
     const exists = await revParse(repo.top, `refs/heads/${slice}`);
@@ -420,10 +421,8 @@ export async function save(repo, actor, { message, paths = [], slice } = {}) {
   if (branch === repo.config.truth && !f.fresh) throw new LockerError("NOT_FETCHED", `cannot reach the remote, so it is unknown whether ${repo.config.truth} is behind; saving on the truth branch waits`, { next: "check the connection, then sl status" });
   await git(repo.top, ["add", "-A", "--", ...(paths.length ? paths : ["."])]);
   if (await mergeInProgress(repo)) {   // finishing an update: every marked line must be settled, or the markers would be saved as content
-    const touched = ((await git(repo.top, ["diff", "--name-only", "HEAD", "MERGE_HEAD"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
-    const left = touched.length ? ((await git(repo.top, ["grep", "-l", "--cached", "-e", "^<<<<<<< ", "-e", "^=======$", "-e", "^>>>>>>> ", "--", ...touched], { allowFail: true })) ?? "").split("\n").filter(Boolean) : [];
-    const still = await conflictFiles(repo);
-    if (left.length || still.length) throw new LockerError("MARKERS_LEFT", `${[...new Set([...still, ...left])].join(", ")} still ${still.length ? "has lines to settle" : "holds git's marks"}; the update is not finished`, { files: [...new Set([...still, ...left])], next: settleNext([...new Set([...still, ...left])]) });
+    const left = await unsettled(repo, { staged: true });
+    if (left.length) throw new LockerError("MARKERS_LEFT", `${left.join(", ")} still holds git's marks; the update is not finished`, { files: left, next: settleNext(left) });
   }
   if (await isClean(repo.top)) return { saved: false, reason: "nothing to save", branch, head: await revParse(repo.top, "HEAD") };
   const body = `${message}\n\n${trailers({ Actor: `${actor.name} (${actor.kind})`, Session: actor.session })}\n`;
@@ -470,7 +469,7 @@ export async function update(repo, actor, { message } = {}) {
   const branch = await currentBranch(repo.top);
   if (branch === "HEAD") throw new LockerError("DETACHED", "this folder is not on a branch", { next: `sl save -m "<what and why>" --slice <name>` });
   if (branch === truth) throw new LockerError("BAD_SLICE", `${truth} is the truth branch; update brings ${truth} into a slice`, { next: "sl pull" });
-  if (await mergeInProgress(repo)) { const files = await conflictFiles(repo); throw new LockerError("UPDATE_CONFLICT", files.length ? `an update is already waiting on ${files.join(", ")}` : "an update is settled but not yet saved", { files, next: settleNext(files) }); }
+  if (await mergeInProgress(repo)) { const files = await unsettled(repo); throw new LockerError("UPDATE_CONFLICT", files.length ? `an update is already waiting on ${files.join(", ")}` : "an update is settled but not yet saved", { files, next: settleNext(files) }); }
   if (!(await isClean(repo.top))) throw new LockerError("DIRTY", "there are changes not yet saved; save them first", { next: `sl save -m "<what and why>"` });
   const f = await freshen(repo, { force: true });
   if (!f.fetched) throw new LockerError("NOT_FETCHED", `cannot reach ${remote}`, { next: "check the connection, then sl update" });
@@ -486,6 +485,13 @@ export async function update(repo, actor, { message } = {}) {
   return { updated: true, branch, head: await revParse(repo.top, "HEAD"), from: target, actor: actor.name };
 }
 const mergeInProgress = async (repo) => (await stat(join(repo.gitDir, "MERGE_HEAD")).catch(() => null)) !== null;
+/** While an update waits: the files still unmerged, plus files the update touched that still hold git's marks (in the index when staged is set, else in the tree). */
+async function unsettled(repo, { staged = false } = {}) {
+  const still = await conflictFiles(repo);
+  const touched = ((await git(repo.top, ["diff", "--name-only", "HEAD", "MERGE_HEAD"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
+  const marked = touched.length ? ((await git(repo.top, ["grep", "-l", ...(staged ? ["--cached"] : []), "-e", "^<<<<<<< ", "-e", "^=======$", "-e", "^>>>>>>> ", "--", ...touched], { allowFail: true })) ?? "").split("\n").filter(Boolean) : [];
+  return [...new Set([...still, ...marked])];
+}
 const conflictFiles = async (repo) => ((await git(repo.top, ["diff", "--name-only", "--diff-filter=U"], { allowFail: true })) ?? "").split("\n").filter(Boolean);
 const settleNext = (files) => files.length ? `open ${files.join(", ")}, keep the lines you want between the <<<<<<< and >>>>>>> marks and delete the marks (in a record file the two sides are keys named "<<<<<<< ours" and ">>>>>>> theirs"), then sl save -m "<what and why>"` : `the marked lines are settled; sl save -m "<what and why>" finishes the update`;
 
@@ -560,7 +566,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
       // nothing half-done is left on the truth branch, and the folder goes back to the slice so the next step can be run from there
       const files = await conflictFiles(repo);
       await git(repo.top, ["reset", "--quiet", "--hard", `${remote}/${truth}`]);
-      await git(repo.top, ["clean", "-fdq"], { allowFail: true });   // the tree was clean before the squash, so anything untracked now is the squash's debris
+      await git(repo.top, ["clean", "-fq"], { allowFail: true });   // the tree had no untracked file before the squash (DIRTY refused), so any file now is the squash's debris; folders are left
       await git(repo.top, ["checkout", "--quiet", slice]); done = true;
       if (!files.length) throw new LockerError("GIT", `the squash of ${slice} onto ${truth} failed: ${(e.stderr ?? String(e)).trim()}`, { next: "sl status" });
       throw new LockerError("ACCEPT_CONFLICT", `${slice} and ${truth} changed the same lines in ${files.join(", ")}; the slice has to take ${truth}'s version of those lines first`, { files, next: `on ${slice}: sl update (brings ${truth} into the slice; a line both changed is left for you to settle), then sl backup, a new review, then sl accept` });

@@ -1,4 +1,4 @@
-// The MCP server: the same eight verbs agents need, over stdio. The actor comes from SL_ACTOR in the server's environment, never
+// The MCP server: the same nine verbs agents need, over stdio. The actor comes from SL_ACTOR in the server's environment, never
 // from a tool argument. Each result is JSON text plus structuredContent; a refusal is an error result with the code and the reason.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -6,7 +6,7 @@ import { z } from "zod";
 import * as L from "./locker.js";
 
 export function buildServer(cwd = process.cwd()) {
-  const server = new McpServer({ name: "sim-locker", version: "0.2.4" });
+  const server = new McpServer({ name: "sim-locker", version: "0.2.5" });
   const wrap = (fn) => async (args) => {
     try {
       const repo = await L.openRepo(cwd);
