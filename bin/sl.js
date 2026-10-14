@@ -58,7 +58,7 @@ function plain(o) {
     lines.push(`backed up  ${s.backedUp ? "yes, on " + o.remote : "no" + (s.remoteHead ? ` (remote has ${s.remoteHead.slice(0, 7)}, ${s.ahead ?? "?"} ahead, ${s.behind ?? "?"} behind)` : " (never pushed)")}`);
     lines.push(`accepted   ${s.accepted ? "yes, as " + s.accepted.slice(0, 7) + " on " + o.truth.branch : s.onTruth ? "n/a on the truth branch" : "no"}`);
     lines.push(`live       ${!s.live.applies ? "n/a (this project has no live target)" : s.live.commit ? `${s.live.commit.slice(0, 7)} set by ${s.live.setBy} ${s.live.at}` : "never set"}`);
-    lines.push(`lease      ${o.lease?.owner ? `${o.lease.owner} until ${o.lease.expires}${o.lease.expired ? " (expired)" : ""}` : "free"}`);
+    lines.push(`lease      ${o.lease?.owner ? `${o.lease.owner} until ${o.lease.expires}${o.lease.expired ? " (expired)" : o.lease.mine ? " (yours)" : ""}` : "free"}`);
     if (o.reviews.length) lines.push(`reviews    ${o.reviews.map((r) => `${r.id} ${r.verdict} by ${r.reviewer}`).join("; ")}`);
     lines.push(`next       ${o.next.at(-1).step}`);
     return lines.join("\n");
