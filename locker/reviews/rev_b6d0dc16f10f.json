@@ -1,0 +1,24 @@
+{
+ "id": "rev_b6d0dc16f10f",
+ "kind": "review",
+ "range": {
+  "from": "39aa520278f9f67d41b134fdebed6de8dc92f5b8",
+  "to": "c5cc01aeb1e0076a9585c569858a9dedf6213bf3"
+ },
+ "reviewer": "reviewer",
+ "reviewerKind": "agent",
+ "session": "509260993471",
+ "verdict": "pass",
+ "findings": "Reviewed 0.2.8 (head c5cc01a) against 0.2.7 with scratch clones under the scratchpad. The stamp change is a seamless upgrade: 0.2.7 already wrote an ISO time plus newline into .git/locker-fetched, so an old file is read as is (tried with its mtime set to 2020: no fetch, age 0). Trailing spaces, CRLF and a blank line parse; an empty file, garbage, nulls, a bare epoch number and a date with no time all give null and the command fetches and rewrites the stamp; a stamp 2 s in the future fetches, 2 s in the past does not. A directory at that path crashes with EISDIR on the write, the same as main, so not new. The new test passed three times out of three in node --test (5.42 s each, 22 of 22, the process exits in about 31 s, no timer kept alive since the 3300 ms timer is awaited). It does prove the folder comes back: with 0.2.6's finally condition (was !== slice) put into a scratch copy, the test fails with actual main, expected slice/g. npm test 28 pass on the new head, npm run lines 1105, no em dash in the diff, 0.2.8 in package.json, package-lock.json and mcp.js, and DESIGN and the backlog say what the code does. The first pass of this review found the README's Not in the suite sentence had dropped LEASE_NOT_MINE, which no test asserts, and listed PUSH_REFUSED while test line 384 asserts backup's; c5cc01a fixes both and the sentence now matches the suite. Polish, no change needed: the 0.05 minute lease gives the two accept calls before the gate 3 s to finish, ample here but the margin to watch on a slow box.",
+ "cited": {
+  "DESIGN.md": "1bced95807c3fcb86b420b4bcab1527c477d4773",
+  "README.md": "d8a81369154c610694167cbc835d47a4f6bd37b8",
+  "docs/backlog.md": "c18b8c3368a4aae85d65d53e09da691df5d2884d",
+  "package-lock.json": "3165ad73aadde3dd8be0cc2a02fec859490af23c",
+  "package.json": "d88e834f28def19162913aabbf0580e663ca6b19",
+  "src/locker.js": "ae5b3584fe603977db8c9ffbf8d86401cb1b9085",
+  "src/mcp.js": "715627a3ceb9a5860ff5c646d7658844dcad2b21",
+  "test/locker.test.js": "74c6dc8c0cbe6d645dc8ffda046187158a19eca8"
+ },
+ "created": "2026-10-14T05:01:07.679Z"
+}
