@@ -52,6 +52,7 @@ export function checkConfig(config, from = "locker.json") {
   if (config.drill.test !== null && !(Array.isArray(config.drill.test) && config.drill.test.every((x) => typeof x === "string") && config.drill.test.length)) throw new LockerError("CONFIG", "drill.test must be a list of strings (the command and its arguments)");
   if (!(Number.isInteger(config.drill.timeoutSeconds) && config.drill.timeoutSeconds >= 1 && config.drill.timeoutSeconds <= 86400)) throw new LockerError("CONFIG", "drill.timeoutSeconds must be a whole number of seconds from 1 to 86400");
   if (!(Number.isInteger(config.accept.gateTimeoutSeconds) && config.accept.gateTimeoutSeconds >= 1 && config.accept.gateTimeoutSeconds <= 86400)) throw new LockerError("CONFIG", "accept.gateTimeoutSeconds must be a whole number of seconds from 1 to 86400");
+  if (config.accept.gateTimeoutSeconds > config.lease.ttlMinutes * 60) throw new LockerError("CONFIG", `accept.gateTimeoutSeconds (${config.accept.gateTimeoutSeconds}) is longer than the lease (${config.lease.ttlMinutes} min); a gate that outlives the lease can never be accepted, so raise lease.ttlMinutes or lower the timeout`);
   return config;
 }
 
@@ -638,6 +639,7 @@ export async function accept(repo0, actor, { slice, reviewId, message, confirm }
   const pending = await requireConfirm(repo, actor, "accept", { slice, head, reviewId }, confirm);
   if (pending) return { ...pending, slice, head, commits: commits.length, review: reviewId, ...(bootstrap ? { bootstrap: true } : {}), gate: repo.config.accept.gate ? `${repo.config.accept.gate.join(" ")} will run on ${head.slice(0, 7)} at the confirm step` : null };
   if (repo.config.accept.gate) {
+    await lease(repo, actor, "renew");   // the gate may run for most of the lease's life; it starts with a full lease, and the last look still asks the remote afterwards
     const gate = await runGate(repo, head, actor);
     if (gate.code !== 0) throw new LockerError("GATE_FAILED", `the project's own gate refused (${repo.config.accept.gate.join(" ")} on ${head.slice(0, 7)}, exit ${gate.code}):\n${gate.output.trim().split("\n").slice(-12).join("\n")}`, { output: gate.output });
   }
