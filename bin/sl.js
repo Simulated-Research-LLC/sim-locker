@@ -66,7 +66,7 @@ function plain(o) {
     return lines.join("\n");
   }
   if (o && o.confirmRequired) return o.message;
-  if (o && o.rows) return [`${o.truth}, newest first`, ...o.rows.map((r) => `${r.commit}  ${r.at.slice(0, 16).replace("T", " ")}  ${r.kind.padEnd(16)} ${r.actor ?? "?"}${r.slice ? `  ${r.slice}  ${r.review} (${r.verdict ?? "?"} by ${r.reviewer ?? "?"})` : ""}  ${r.subject}`)].join("\n");
+  if (o && o.rows) return [`${o.truth}, newest first (${o.fetchedAt})`, ...o.rows.map((r) => `${r.commit}  ${r.at.slice(0, 16).replace("T", " ")}  ${r.kind.padEnd(16)} ${r.actor ?? "?"}${r.slice ? `  ${r.slice}  ${r.review} (${r.verdict ?? "?"} by ${r.reviewer ?? "?"})` : ""}  ${r.subject}`)].join("\n");
   const scalar = ([, v]) => v !== undefined && (typeof v !== "object" || (Array.isArray(v) && v.every((x) => typeof x === "string")));
   return Object.entries(o).filter(scalar).filter(([k]) => k !== "hits").map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(k === "wrote" ? "\n       " : ", ") : v}`).join("\n") + (o.hits ? `\n${o.hits.map((h) => `${h.kind} ${h.id} ${h.verdict ?? ""} ${h.path}`).join("\n")}` : "") + (o.lease ? `\nlease: ${JSON.stringify(o.lease)}` : "") + (o.truth && typeof o.truth === "object" ? `\ntruth: ${JSON.stringify(o.truth)}` : "") + (o.test && typeof o.test === "object" ? `\ntest: ${o.test.command} exited ${o.test.code}\n${o.test.lastLines}` : "");
 }

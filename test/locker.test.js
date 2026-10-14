@@ -773,4 +773,14 @@ test("history reads the truth branch's saves and acceptances from the trailers a
   assert.ok(h.rows.some((r) => r.kind === "saved" && r.actor === "rick (human)"), "a human save on main");
   assert.equal(h.rows.at(-1).kind, "outside the tool"); assert.equal(h.rows.at(-1).subject, "first");
   const two = await L.history(repo, { count: 2 }); assert.equal(two.rows.length, 2);
+  await rejects(L.history(repo, { count: 0 }), "USAGE"); await rejects(L.history(repo, { count: Number("abc") }), "USAGE"); await rejects(L.history(repo, { count: 2.5 }), "USAGE");
+  // a crafted subject cannot make a row, two hand-typed actor trailers read as one row, and an acceptance trailer with no record behind it has null reviewer and verdict
+  const Z = join(tmp, "Z"); sh(tmp, "clone", "--quiet", remote, Z);
+  sh(Z, "commit", "--quiet", "--allow-empty", "-m", "odd\x1esubject\x1enot a hash"); sh(Z, "commit", "--quiet", "--allow-empty", "-m", "hand typed\n\nLocker-Actor: a (agent)\nLocker-Actor: b (agent)\nLocker-Slice: slice/fake\nLocker-Review: rev_000000000009");
+  sh(Z, "push", "--quiet", "origin", "main"); await L.freshen(repo, { force: true });
+  const odd = await L.history(repo, { count: 2 });
+  assert.equal(odd.rows.length, 2); assert.equal(odd.rows[0].kind, "accepted"); assert.equal(odd.rows[0].actor, "a (agent), b (agent)"); assert.equal(odd.rows[0].reviewer, null); assert.equal(odd.rows[0].verdict, null);
+  assert.equal(odd.rows[1].subject, "odd\x1esubject\x1enot a hash", "a record separator byte in a subject stays in the subject and makes no row"); assert.equal(odd.rows[1].kind, "outside the tool");
+  sh(Z, "push", "--quiet", "--force", "origin", `${sh(Z, "rev-parse", "HEAD~2")}:main`);   // raw git in the test only, to put the remote back
+  await L.freshen(repo, { force: true }); sh(A, "update-ref", "refs/heads/main", sh(A, "rev-parse", "origin/main"));
 });

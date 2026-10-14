@@ -292,17 +292,20 @@ async function accepted(repo) {
 /** The truth branch's history as Sim Locker sees it: each save on it with who made it, and for an acceptance the slice, the review and
  *  the reviewer, read from the trailers and the review record at that commit. A commit with no trailer is one made outside the tool. */
 export async function history(repo, { count = 20 } = {}) {
-  const { truth, remote } = repo.config, ref = (await revParse(repo.top, `${remote}/${truth}`)) ?? truth;
-  const log = await git(repo.top, ["log", `-n${count}`, "--format=%H%x00%aI%x00%s%x00%(trailers:key=Locker-Actor,valueonly)%x00%(trailers:key=Locker-Slice,valueonly)%x00%(trailers:key=Locker-Review,valueonly)%x00%(trailers:key=Locker-Session,valueonly)%x1e", ref], { allowFail: true });
+  if (!(Number.isInteger(count) && count >= 1 && count <= 500)) throw new LockerError("USAGE", `history takes a whole number from 1 to 500, not ${count}`, { next: "sl history -n 20" });
+  const { truth, remote } = repo.config, remoteRef_ = await revParse(repo.top, `${remote}/${truth}`), ref = remoteRef_ ? `${remote}/${truth}` : truth;
+  // seven NUL-separated fields per commit, and the commit hash first: no field can hold a NUL, so a crafted subject cannot make a row
+  const out = await git(repo.top, ["log", `-n${count}`, "-z", "--format=%H%x00%aI%x00%s%x00%(trailers:key=Locker-Actor,valueonly,separator=%x2C )%x00%(trailers:key=Locker-Slice,valueonly)%x00%(trailers:key=Locker-Review,valueonly)%x00%(trailers:key=Locker-Session,valueonly)", ref]);
   const rows = [];
-  for (const rec of (log ?? "").split("\x1e")) {
-    const [commit, at, subject, actor, slice, review, session] = rec.split("\0").map((x) => x?.trim());
-    if (!commit) continue;
+  const tokens = out.split("\0");   // seven fields per commit; -z puts a NUL between records, so the tokens line up seven by seven
+  for (let i = 0; i + 7 <= tokens.length; i += 7) {
+    const [commit, at, subject, actor, slice, review, session] = tokens.slice(i, i + 7).map((x) => x.trim());
+    if (!/^[0-9a-f]{40}$/.test(commit)) break;
     const row = { commit: commit.slice(0, 7), at, subject, actor: actor || null, kind: slice ? "accepted" : actor ? "saved" : "outside the tool", slice: slice || null, review: review || null, session: session || null };
-    if (review) { const text = await git(repo.top, ["show", `${commit}:locker/reviews/${review}.json`], { allowFail: true }); try { const r = JSON.parse(text); row.reviewer = r.reviewer ?? null; row.verdict = r.verdict ?? null; } catch { row.reviewer = null; } }
+    if (review) { row.reviewer = null; row.verdict = null; try { const r = JSON.parse(await git(repo.top, ["show", `${commit}:locker/reviews/${review}.json`])); row.reviewer = r.reviewer ?? null; row.verdict = r.verdict ?? null; } catch { /* no record at that commit: the trailers say accepted, nothing backs it */ } }
     rows.push(row);
   }
-  return { truth: `${remote}/${truth}`, rows };
+  return { truth: ref, fetchedAt: remoteRef_ ? "as of the last fetch" : "the local branch; nothing has been backed up", rows };
 }
 
 /** A review record: the exact range, the reviewer, the findings, and the blob hash of every file it cites, so status can see it go stale. */
