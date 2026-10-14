@@ -18,10 +18,10 @@ Read `README.md` for what it does and `DESIGN.md` for why. This file is the work
 
 | path | what |
 |---|---|
-| `src/locker.js` | the core. `openRepo`, `actorFromEnv`, `freshen`, `lease`, `review`, `status`, `save`, `backup`, `pull`, `update` (bring the truth branch into a slice), `accept`, `revert`, `init`, `setLive`, `find`, `drill` (the restore drill: second remote, plain clone, tests) |
+| `src/locker.js` | the core. `openRepo`, `actorFromEnv`, `freshen`, `lease`, `review`, `status`, `save`, `backup`, `pull`, `update` (bring the truth branch into a slice), `accept`, `revert`, `init`, `setLive`, `find`, `history` (who did what on the truth branch), `drill` (the restore drill: second remote, plain clone, tests) |
 | `src/git.js` | `git(cwd, args, {input, allowFail})` and small helpers. `allowFail` returns null instead of throwing |
 | `src/merge-record.js` | `mergeKeys`, `mergeJson`, `mergeFrontmatter`, `mergeRecordFiles` (the git entry point) |
-| `src/mcp.js` | `buildServer(cwd)`: nine tools over the core |
+| `src/mcp.js` | `buildServer(cwd)`: ten tools over the core |
 | `docs/review-0.1.md` | the adversarial review of the first build and the fix status of every finding; the attack list to rerun after any change to `accept`, `save` or the lease |
 | `bin/sl.js` | argument parsing and plain-text printing only; no logic |
 | `bin/sl-guard.js`, `.github/workflows/guard-main.yml` | the tripwire on pushes to main: fails and opens an issue on a forced push or a commit that bypassed the tool |

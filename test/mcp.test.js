@@ -29,9 +29,12 @@ before(async () => {
 });
 after(async () => { delete process.env.SL_ACTOR; delete process.env.SL_SESSION; await client?.close(); await rm(tmp, { recursive: true, force: true }); });
 
-test("the server offers the nine tools and status carries the same next steps as the CLI", async () => {
+test("the server offers the ten tools and status carries the same next steps as the CLI", async () => {
   const names = (await client.listTools()).tools.map((t) => t.name).sort();
-  assert.deepEqual(names, ["accept", "backup", "drill", "find", "lease", "review", "save", "status", "update"]);
+  assert.deepEqual(names, ["accept", "backup", "drill", "find", "history", "lease", "review", "save", "status", "update"]);
+  const h = await call("history", { count: 3 });
+  assert.equal(h.structuredContent.rows[0].kind, "saved"); assert.equal(h.structuredContent.rows[0].actor, "rick (human)");
+  assert.equal(h.structuredContent.rows.at(-1).kind, "outside the tool", "the first commit was made with raw git");
   const st = await call("status", { fetch: false });
   assert.equal(st.isError, undefined); assert.equal(st.structuredContent.project, "demo");
   assert.ok(Array.isArray(st.structuredContent.next)); assert.equal(st.structuredContent.next.length, st.structuredContent.problems.length + 1);

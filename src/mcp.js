@@ -1,4 +1,4 @@
-// The MCP server: the same nine verbs agents need, over stdio. The actor comes from SL_ACTOR in the server's environment, never
+// The MCP server: the same ten verbs agents need, over stdio. The actor comes from SL_ACTOR in the server's environment, never
 // from a tool argument. Each result is JSON text plus structuredContent; a refusal is an error result with the code and the reason.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -6,7 +6,7 @@ import { z } from "zod";
 import * as L from "./locker.js";
 
 export function buildServer(cwd = process.cwd()) {
-  const server = new McpServer({ name: "sim-locker", version: "0.2.8" });
+  const server = new McpServer({ name: "sim-locker", version: "0.2.9" });
   const wrap = (fn) => async (args) => {
     try {
       const repo = await L.openRepo(cwd);
@@ -35,6 +35,8 @@ export function buildServer(cwd = process.cwd()) {
     wrap(async (repo, a) => L.lease(repo, await actor(repo), a.action)));
   server.registerTool("update", { description: "Bring the truth branch's changes into the current slice as a save stamped with this actor, so the slice can be accepted after the truth branch moved. Lines both sides changed are left in the files with git's marks (UPDATE_CONFLICT names them); settle them, then save.", inputSchema: { message: z.string().optional() }, annotations: rw },
     wrap(async (repo, a) => L.update(repo, await actor(repo), a)));
+  server.registerTool("history", { description: "The truth branch's last saves, newest first: who made each (from the Locker-Actor trailer), and for an acceptance the slice, the review id, its reviewer and verdict. A save with no trailer was made outside the tool.", inputSchema: { count: z.number().int().min(1).max(500).optional() }, annotations: ro },
+    wrap((repo, a) => L.history(repo, { count: a.count ?? 20 })));
   server.registerTool("find", { description: "Search the review and live records for words.", inputSchema: { query: z.string() }, annotations: ro },
     wrap((repo, a) => L.find(repo, a.query)));
   server.registerTool("drill", { description: "Restore drill: fetch, push the remote truth branch to a fresh bare repository under the temp folder, clone it back with plain git and no Sim Locker, check the commit and locker.json came along, and run drill.test from the truth branch's locker.json in that clone. Changes nothing in the working tree or on the remote. DRILL_FAILED keeps the folders for a look.", inputSchema: { keep: z.boolean().optional().describe("keep the two folders") }, annotations: rw },
