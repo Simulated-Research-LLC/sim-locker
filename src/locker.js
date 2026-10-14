@@ -703,7 +703,8 @@ export async function init(cwd, { project, truth = "main", remote = "origin", ac
   if (!attrs.includes("merge=locker-record")) { await writeFile(join(top, ".gitattributes"), attrs + (attrs && !attrs.endsWith("\n") ? "\n" : "") + "*.record.json merge=locker-record\nlocker/**/*.json merge=locker-record\n"); wrote.push(".gitattributes (record files merge per key)"); }
   const sl = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "sl.js");
   await git(top, ["config", "merge.locker-record.name", "Sim Locker record merge (per top-level key)"]);
-  await git(top, ["config", "merge.locker-record.driver", `"${process.execPath}" "${sl}" merge-record %O %A %B %P`]);
+  const slash = (x) => x.split("\\").join("/");   // the driver line is read by git's own shell, where a backslash escapes; forward slashes work on Windows too
+  await git(top, ["config", "merge.locker-record.driver", `"${slash(process.execPath)}" "${slash(sl)}" merge-record %O %A %B %P`]);
   wrote.push(".git/config (the record merge driver, this clone only)");
   const repo = await openRepo(top);
   const humans = Object.entries(repo.config.actors).filter(([, k]) => k === "human").map(([n]) => n).join(" or ") || "<a human actor>";

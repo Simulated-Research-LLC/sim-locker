@@ -45,7 +45,8 @@ test("git uses the driver through .gitattributes", async () => {
   const tmp = await mkdtemp(join(tmpdir(), "slmerge-"));
   const sh = (...a) => execFileSync("git", a, { cwd: tmp, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim();
   sh("init", "--quiet", "-b", "main");
-  sh("config", "merge.locker-record.driver", `${process.execPath} ${resolve("bin/sl.js")} merge-record %O %A %B %P`);
+  const slash = (x) => x.split("\\").join("/");
+  sh("config", "merge.locker-record.driver", `"${slash(process.execPath)}" "${slash(resolve("bin/sl.js"))}" merge-record %O %A %B %P`);
   await writeFile(join(tmp, ".gitattributes"), "*.record.json merge=locker-record\n");
   await writeFile(join(tmp, "x.record.json"), JSON.stringify({ a: 1, b: 2 }));
   sh("add", "-A"); sh("commit", "--quiet", "-m", "base");
