@@ -14,7 +14,7 @@ You never need the words commit, push, pull, merge, rebase or land. `sl status` 
 ## Install
 
 ```
-git clone https://github.com/simulated-research/sim-locker
+git clone https://github.com/Simulated-Research-LLC/sim-locker
 cd sim-locker && npm install && npm link      # gives you `sl`, `simlocker` and `sl-mcp` on PATH
 ```
 
@@ -23,8 +23,8 @@ Node 22 or newer. No build step. On Windows, PowerShell already has `sl` as a sh
 ## Use it on a project
 
 ```
-sl clone https://github.com/simulated-research/old-winds     # clone and make it managed in one step
-cd old-winds
+sl clone https://github.com/Simulated-Research-LLC/Old-Winds     # clone and make it managed in one step
+cd Old-Winds
 export SL_ACTOR=rick                                           # who you are: rick, claude, astra or percept
 sl status
 ```
