@@ -1,5 +1,7 @@
 # Sim Locker
 
+> **Retired 2026-11-03.** This repository is to be archived read-only on Rick's word of 2026-11-02 and nothing in it is maintained. Its last two users, Old Winds and Percept, no longer use it; Old Winds removed it on 2026-11-02.
+
 The truth store for one person and their AI agents. Git underneath for storage and transport. On top, four words and a few rules that git does not have.
 
 | word | means | how you get there |
